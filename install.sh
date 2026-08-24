@@ -338,12 +338,41 @@ NGINX
 }
 
 finish_public() {
-  say "Network exposure notes:"
-  if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
-    warn "ufw is active. Allow the port with:  ufw allow $PORT/tcp"
+  say "Configuring firewall for direct access ..."
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    if ufw allow "$PORT/tcp" >/dev/null 2>&1; then
+      info "ufw: allowed inbound TCP $PORT"
+    else
+      warn "ufw is active but the rule failed — run manually:  ufw allow $PORT/tcp"
+    fi
+  elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    if firewall-cmd --add-port="$PORT/tcp" --permanent >/dev/null 2>&1 \
+       && firewall-cmd --reload >/dev/null 2>&1; then
+      info "firewalld: allowed inbound TCP $PORT"
+    else
+      warn "firewalld is active but the rule failed — run manually:"
+      warn "    firewall-cmd --add-port=$PORT/tcp --permanent && firewall-cmd --reload"
+    fi
+  else
+    info "no local firewall detected (ufw/firewalld inactive)"
   fi
-  warn "If this is a cloud VM (AWS/GCP/...), also open TCP $PORT in its"
-  warn "firewall/security-group panel."
+
+  say "Checking outside reachability ..."
+  if command -v curl >/dev/null 2>&1 && [ "$IP" != "SERVER_IP" ]; then
+    if curl -s -m 6 "http://$IP:$PORT/health" 2>/dev/null | grep -q '"ok"'; then
+      info "http://$IP:$PORT answers from the internet side ✔"
+    else
+      warn "Could not reach http://$IP:$PORT from this server."
+      warn "Most likely cause: your cloud provider's SECURITY GROUP / external"
+      warn "firewall does not allow inbound TCP $PORT yet (this installer cannot"
+      warn "change that from inside the VM). Examples:"
+      warn "  AWS:   EC2 -> Security Groups -> Inbound -> Custom TCP $PORT, source 0.0.0.0/0"
+      warn "  GCP:   VPC network -> Firewall -> create rule allowing tcp:$PORT"
+      warn "  Azure: Network security group -> Inbound port rule -> add $PORT"
+      warn "Note: some providers also block connecting to your OWN public IP from"
+      warn "inside the VM — if you've opened $PORT, just test from your phone/laptop."
+    fi
+  fi
   warn "Plain HTTP: your password protects the app, but HTTPS is safer —"
   warn "when you have a domain, re-run:  $0 --domain YOUR_DOMAIN"
   FINAL_URL="http://$IP:$PORT"

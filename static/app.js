@@ -204,7 +204,7 @@ $("btn-term").addEventListener("click", () => {
 });
 $("term-close").addEventListener("click", () => $("term-drawer").classList.add("hidden"));
 $("term-run").addEventListener("click", termRun);
-$("term-cmd").addEventListener("keydown", (e) => {
+$("term-cmd")?.addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); termRun(); }
   else if (e.key === "ArrowUp" && termHist.length) {
     e.preventDefault();
@@ -227,9 +227,9 @@ document.addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-act]");
   if (!btn) return;
   const act = btn.dataset.act;
-  if (act === "toggle-key") { $("key-toggle").click(); }
-  else if (act === "check-key") { $("key-check").click(); }
-  else if (act === "save-key") { $("key-save").click(); }
+  if (act === "toggle-key") { $("key-toggle")?.click(); }
+  else if (act === "check-key") { $("key-check")?.click(); }
+  else if (act === "save-key") { $("key-save")?.click(); }
 });
 async function validateKey(k) {
   const r = await fetch("/auth/validate-key", {
@@ -482,7 +482,7 @@ async function doSend() {
   if (!text || !chatId) return;
   const keyOk = (await fetch("/auth/key").then((r) => r.json())).configured;
   if (!keyOk) {
-    $("btn-settings").click(); $("key-toggle").click();
+    $("btn-settings").click(); $("key-toggle")?.click();
     $("key-status").textContent = "add your OpenRouter API key below";
     return;
   }

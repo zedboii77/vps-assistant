@@ -85,15 +85,61 @@ $("auth-form").addEventListener("submit", async (e) => {
 });
 
 /* ---------- key / settings ---------- */
+const MODEL_SUGGESTIONS = {
+  openrouter: ["stealth/ox-alpha", "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.1", "google/gemini-2.5-pro", "deepseek/deepseek-chat-v3.1",
+    "x-ai/grok-code-fast-1", "qwen/qwen3-coder"],
+  opencode: ["kimi-k2.6", "glm-5.1", "minimax-m2.7", "qwen3-coder",
+    "grok-code", "deepseek-v4-pro", "big-pickle (free)", "code-supernova (free)"],
+};
+
 async function refreshKeyStatus() {
   const k = await fetch("/auth/key").then((r) => r.json());
-  $("model-badge").textContent = k.model + " · " + (k.reasoning || "?");
-  $("model-name").textContent = k.model || "?";
-  document.querySelectorAll("#reasoning-seg button").forEach((b) =>
-    b.classList.toggle("active", b.dataset.effort === k.reasoning));
+  const prov = k.provider || "openrouter";
+  $("model-badge").textContent = `${prov} · ${k.model} · ${k.reasoning || "?"}`;
+  $("key-label").textContent =
+    (k.providers?.[prov]?.label || prov) + " API key";
   $("key-status").textContent = k.configured
     ? k.masked + " configured" : "not configured";
+  document.querySelectorAll("#provider-seg button").forEach((b) =>
+    b.classList.toggle("active", b.dataset.provider === prov));
+  document.querySelectorAll("#reasoning-seg button").forEach((b) =>
+    b.classList.toggle("active", b.dataset.effort === k.reasoning));
+  if (document.activeElement !== $("model-input")) {
+    $("model-input").value = k.model || "";
+  }
+  const dl = $("model-suggestions");
+  dl.innerHTML = (MODEL_SUGGESTIONS[prov] || [])
+    .map((m) => `<option value="${esc(m)}">`).join("");
+  $("model-note").textContent = prov === "opencode"
+    ? "Zen chat-completions models; reasoning effort is ignored by this provider."
+    : "Any OpenRouter model slug.";
 }
+
+document.querySelectorAll("#provider-seg button").forEach((b) =>
+  b.addEventListener("click", async () => {
+    const r = await fetch("/settings/provider", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: b.dataset.provider }),
+    });
+    if (r.ok) refreshKeyStatus();
+  }));
+
+let modelSaveTimer = null;
+$("model-input").addEventListener("input", () => {
+  clearTimeout(modelSaveTimer);
+  modelSaveTimer = setTimeout(async () => {
+    const v = $("model-input").value.trim();
+    if (!v) return;
+    await fetch("/settings/provider", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: v }),
+    });
+    refreshKeyStatus();
+  }, 700);
+});
 
 document.querySelectorAll("#reasoning-seg button").forEach((b) =>
   b.addEventListener("click", async () => {
@@ -207,7 +253,7 @@ async function validateKey(k) {
 $("key-check").addEventListener("click", async () => {
   const v = $("key-input").value.trim();
   const note = $("key-verify");
-  if (!v.startsWith("sk-or-")) { note.textContent = "!! keys start with sk-or-"; return; }
+  if (v.length < 20) { note.textContent = "!! that does not look like an API key"; return; }
   note.textContent = "checking with OpenRouter…";
   const d = await validateKey(v);
   note.textContent = d.ok
@@ -217,7 +263,7 @@ $("key-check").addEventListener("click", async () => {
 $("key-save").addEventListener("click", async () => {
   const v = $("key-input").value.trim();
   const note = $("key-verify");
-  if (!v.startsWith("sk-or-")) { note.textContent = "!! keys start with sk-or-"; return; }
+  if (v.length < 20) { note.textContent = "!! that does not look like an API key"; return; }
   const r = await fetch("/auth/key", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

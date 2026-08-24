@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>vpsa — terminal</title>
-<link rel="stylesheet" href="/style.css?v=9">
+<link rel="stylesheet" href="/style.css?v=10">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230b0b0b'/%3E%3Ctext x='4' y='23' font-size='18' font-family='monospace' fill='%23e8e8e8'%3E%26gt;_%3C/text%3E%3C/svg%3E">
 </head>
 <body>
@@ -66,7 +66,16 @@
 <div id="settings" class="modal hidden">
   <div class="modal-card">
     <div class="modal-head"><h2>settings</h2><button id="settings-close" class="mini-btn">esc</button></div>
-    <label class="fld-label">OpenRouter API key</label>
+    <label class="fld-label">Provider</label>
+    <div class="seg" id="provider-seg">
+      <button data-provider="openrouter">openrouter</button>
+      <button data-provider="opencode">opencode zen</button>
+    </div>
+    <label class="fld-label">Model</label>
+    <input id="model-input" type="text" placeholder="model slug" autocomplete="off" spellcheck="false" list="model-suggestions">
+    <datalist id="model-suggestions"></datalist>
+    <p id="model-note" class="fld-note"></p>
+    <label class="fld-label" id="key-label">API key</label>
     <code id="key-status" class="key-status">…</code>
     <input id="key-input" type="password" placeholder="sk-or-v1-… (paste here)">
     <div id="key-actions">
@@ -74,8 +83,6 @@
       <button id="key-save" class="mini-btn primary" data-act="save-key">save key</button>
     </div>
     <p id="key-verify" class="fld-note"></p>
-    <label class="fld-label">Model</label>
-    <code id="model-name" class="key-status">…</code>
     <label class="fld-label">Reasoning effort</label>
     <div class="seg" id="reasoning-seg">
       <button data-effort="auto">auto</button>
@@ -103,6 +110,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=9"></script>
+<script src="/app.js?v=10"></script>
 </body>
 </html>

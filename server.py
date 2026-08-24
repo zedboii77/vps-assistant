@@ -42,9 +42,26 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("VPSA_PORT", "8095"))
 HOST = os.environ.get("VPSA_HOST", "127.0.0.1")
 DATA_DIR = os.environ.get("VPSA_DATA_DIR", os.path.join(SCRIPT_DIR, "data"))
-MODEL = os.environ.get("VPSA_MODEL", "stealth/ox-alpha")
+MODEL = os.environ.get("VPSA_MODEL", "")
 REASONING_EFFORT = os.environ.get("VPSA_REASONING", "high")
 OR_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+PROVIDERS = {
+    "openrouter": {
+        "label": "OpenRouter",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "default_model": "stealth/ox-alpha",
+        "supports_reasoning": True,
+        "key_env": "OPENROUTER_API_KEY",
+    },
+    "opencode": {
+        "label": "OpenCode Zen",
+        "url": "https://opencode.ai/zen/v1/chat/completions",
+        "default_model": "kimi-k2.6",
+        "supports_reasoning": False,
+        "key_env": "OPENCODE_API_KEY",
+    },
+}
 
 MAX_STEPS = 12                 # agent tool-loop iterations per user turn
 MAX_TOOL_OUTPUT = 8000         # chars of tool output fed back to the model
@@ -78,6 +95,25 @@ def _session_secret() -> bytes:
 
 
 SESSION_SECRET = _session_secret()
+
+# migrate legacy single-provider key file (plain text) -> per-provider JSON
+def _migrate_keyfile() -> None:
+    try:
+        with open(KEY_FILE) as f:
+            raw = f.read().strip()
+    except Exception:
+        return
+    if raw.startswith("{"):
+        return  # already new format
+    if raw:
+        with open(KEY_FILE, "w") as f:
+            json.dump({"openrouter": raw}, f)
+    else:
+        with open(KEY_FILE, "w") as f:
+            json.dump({}, f)
+
+
+_migrate_keyfile()
 
 # ---------------------------------------------------------------- helpers
 
@@ -116,14 +152,17 @@ def check_token(token: str | None) -> bool:
     return int(exp) > time.time()
 
 
-def get_api_key() -> str | None:
-    env = os.environ.get("OPENROUTER_API_KEY", "").strip()
+def get_api_key(provider: str | None = None) -> str | None:
+    provider = provider or get_provider()
+    env_name = PROVIDERS[provider]["key_env"]
+    env = os.environ.get(env_name, "").strip()
     if env:
         return env
     try:
         with open(KEY_FILE) as f:
-            k = f.read().strip()
-            return k or None
+            keys = json.load(f)
+        k = (keys.get(provider) or "").strip()
+        return k or None
     except Exception:
         return None
 
@@ -179,6 +218,20 @@ def load_settings() -> dict:
             return json.load(f)
     except Exception:
         return {}
+
+
+def get_provider() -> str:
+    p = load_settings().get("provider")
+    return p if p in PROVIDERS else "openrouter"
+
+
+def get_model() -> str:
+    m = (load_settings().get("model") or "").strip()
+    if m:
+        return m
+    if MODEL:
+        return MODEL
+    return PROVIDERS[get_provider()]["default_model"]
 
 
 def save_settings(d: dict) -> None:
@@ -352,13 +405,16 @@ def execute_tool(name: str, args: dict) -> dict:
     return {"ok": False, "error": f"unknown tool {name}"}
 
 
-def call_openrouter_stream(convo: list, api_key: str, effort: str):
+def call_openrouter_stream(convo: list, api_key: str, effort: str,
+                           provider: str = "openrouter", model: str = ""):
     """Yield parsed chunks from a streaming completion. Raises on HTTP errors."""
-    payload = {"model": MODEL, "messages": convo, "stream": True,
-               "max_tokens": 16384, "tools": TOOLS_SCHEMA,
-               "reasoning": {"effort": effort}}
+    cfg = PROVIDERS[provider]
+    payload = {"model": model or get_model(), "messages": convo, "stream": True,
+               "max_tokens": 16384, "tools": TOOLS_SCHEMA}
+    if effort and cfg["supports_reasoning"]:
+        payload["reasoning"] = {"effort": effort}
     req = urllib.request.Request(
-        OR_API_URL, data=json.dumps(payload).encode(),
+        cfg["url"], data=json.dumps(payload).encode(),
         headers={"Authorization": f"Bearer {api_key}",
                  "Content-Type": "application/json"})
     resp = urllib.request.urlopen(req, timeout=600)
@@ -378,7 +434,8 @@ def call_openrouter_stream(convo: list, api_key: str, effort: str):
         yield chunk
 
 
-def run_agent(messages: list, api_key: str, should_cancel=None, effort: str = "medium"):
+def run_agent(messages: list, api_key: str, should_cancel=None, effort: str = "medium",
+              provider: str = "openrouter", model: str = ""):
     """Full tool-loop. Yields UI events; final text arrives as delta events.
     `should_cancel` is polled between steps; when true, yields 'cancelled'."""
     convo = [{"role": "system",
@@ -396,7 +453,8 @@ def run_agent(messages: list, api_key: str, should_cancel=None, effort: str = "m
         parts, calls, finish = [], {}, None
         got_any = False
         try:
-            for chunk in call_openrouter_stream(convo, api_key, effort):
+            for chunk in call_openrouter_stream(convo, api_key, effort,
+                                                provider=provider, model=model):
                 got_any = True
                 chs = chunk.get("choices") or []
                 if not chs:
@@ -554,7 +612,8 @@ CHAT_TASK: dict[str, str] = {}   # chat_id -> running task_id
 STATE_LOCK = threading.Lock()
 
 
-def run_agent_task(task: Task, api_key: str, effort_setting: str) -> None:
+def run_agent_task(task: Task, api_key: str, effort_setting: str,
+                   provider: str = "openrouter", model: str = "") -> None:
     """Detached worker: streams events into the task log and persists the
     final assistant message to the chat file. Survives client disconnects."""
     acc: list[str] = []
@@ -571,7 +630,8 @@ def run_agent_task(task: Task, api_key: str, effort_setting: str) -> None:
             task.events.append({"type": "effort", "value": effort})
             task.cond.notify_all()
         for ev in run_agent(msgs, api_key,
-                            should_cancel=lambda: task.cancel, effort=effort):
+                            should_cancel=lambda: task.cancel, effort=effort,
+                            provider=provider, model=model):
             with task.cond:
                 task.events.append(ev)
                 task.cond.notify_all()
@@ -671,11 +731,14 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authed():
             return self._send(401, {"error": "not authenticated"})
         if path == "/auth/key":
-            k = get_api_key()
+            prov = get_provider()
+            k = get_api_key(prov)
             return self._send(200, {"configured": bool(k),
                                     "masked": mask_key(k) if k else None,
-                                    "model": MODEL,
-                                    "reasoning": get_reasoning()})
+                                    "model": get_model(),
+                                    "reasoning": get_reasoning(),
+                                    "provider": prov,
+                                    "providers": PROVIDERS})
         if path == "/chats":
             return self._send(200, {"chats": list_chats()})
         if len(segs) == 2 and segs[0] == "chats" and valid_cid(segs[1]):
@@ -721,16 +784,52 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(401, {"error": "not authenticated"})
         if path == "/auth/key":
             k = str(self._body().get("api_key", "")).strip()
-            if not k.startswith("sk-or-"):
-                return self._send(400, {"error": "that does not look like an OpenRouter key"})
+            prov = get_provider()
+            if len(k) < 20:
+                return self._send(400, {"error": "that does not look like an API key"})
+            try:
+                with open(KEY_FILE) as f:
+                    keys = json.load(f)
+            except Exception:
+                keys = {}
+            keys[prov] = k
             with open(KEY_FILE, "w") as f:
-                f.write(k)
+                json.dump(keys, f)
             os.chmod(KEY_FILE, 0o600)
-            return self._send(200, {"ok": True, "masked": mask_key(k)})
+            return self._send(200, {"ok": True, "masked": mask_key(k),
+                                    "provider": prov})
+        if path == "/settings/provider":
+            body = self._body()
+            s = load_settings()
+            if "provider" in body:
+                p = str(body["provider"]).strip().lower()
+                if p not in PROVIDERS:
+                    return self._send(400, {"error": f"provider must be one of: {', '.join(PROVIDERS)}"})
+                s["provider"] = p
+            if "model" in body:
+                s["model"] = str(body["model"]).strip()[:120]
+            save_settings(s)
+            return self._send(200, {"ok": True, "provider": get_provider(),
+                                    "model": get_model()})
         if path == "/auth/validate-key":
             k = str(self._body().get("api_key", "")).strip()
-            if not k.startswith("sk-or-"):
-                return self._send(400, {"ok": False, "error": "keys start with sk-or-"})
+            prov = get_provider()
+            if len(k) < 20:
+                return self._send(200, {"ok": False, "error": "that does not look like an API key"})
+            if prov == "opencode":
+                req = urllib.request.Request(
+                    "https://opencode.ai/zen/v1/models",
+                    headers={"Authorization": f"Bearer {k}"})
+                try:
+                    with urllib.request.urlopen(req, timeout=20) as r:
+                        r.read()
+                    return self._send(200, {"ok": True, "label": "OpenCode Zen key valid"})
+                except urllib.error.HTTPError as e:
+                    msg = "invalid or revoked key" if e.code in (401, 403) else \
+                          f"OpenCode HTTP {e.code}"
+                    return self._send(200, {"ok": False, "error": msg})
+                except Exception as e:
+                    return self._send(200, {"ok": False, "error": f"network error: {e}"})
             req = urllib.request.Request(
                 "https://openrouter.ai/api/v1/auth/key",
                 headers={"Authorization": f"Bearer {k}"})
@@ -841,6 +940,8 @@ class Handler(BaseHTTPRequestHandler):
             CHAT_TASK[cid] = task.id
         threading.Thread(target=run_agent_task,
                          args=(task, api_key, get_reasoning()),
+                         kwargs={"provider": get_provider(),
+                                 "model": get_model()},
                          daemon=True).start()
         return self._send(202, {"task_id": task.id, "chat_id": cid})
 

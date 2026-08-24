@@ -825,8 +825,20 @@ class Handler(BaseHTTPRequestHandler):
                         r.read()
                     return self._send(200, {"ok": True, "label": "OpenCode Zen key valid"})
                 except urllib.error.HTTPError as e:
-                    msg = "invalid or revoked key" if e.code in (401, 403) else \
-                          f"OpenCode HTTP {e.code}"
+                    body = ""
+                    try:
+                        err = json.loads(e.read().decode(errors="replace"))
+                        body = err.get("error", {}).get("message", "")
+                    except Exception:
+                        pass
+                    if "CreditsError" in body or "payment" in body.lower():
+                        msg = "key valid but no payment method on opencode.ai — only free models (big-pickle) will work"
+                    elif "ModelError" in body or "not supported" in body:
+                        msg = "model not available for this key"
+                    elif e.code in (401, 403):
+                        msg = "invalid or revoked key"
+                    else:
+                        msg = f"OpenCode HTTP {e.code}"
                     return self._send(200, {"ok": False, "error": msg})
                 except Exception as e:
                     return self._send(200, {"ok": False, "error": f"network error: {e}"})

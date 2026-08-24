@@ -93,6 +93,14 @@ const MODEL_SUGGESTIONS = {
     "grok-code", "deepseek-v4-pro", "big-pickle (free)", "code-supernova (free)"],
 };
 
+function get_provider_label() {
+  const active = document.querySelector("#provider-seg button.active");
+  return active ? active.textContent.trim() : "provider";
+}
+
+/* free-tier models on OpenCode Zen that work without a payment method */
+const ZEN_FREE = ["big-pickle"];
+
 async function refreshKeyStatus() {
   const k = await fetch("/auth/key").then((r) => r.json());
   const prov = k.provider || "openrouter";
@@ -112,7 +120,8 @@ async function refreshKeyStatus() {
   dl.innerHTML = (MODEL_SUGGESTIONS[prov] || [])
     .map((m) => `<option value="${esc(m)}">`).join("");
   $("model-note").textContent = prov === "opencode"
-    ? "Zen chat-completions models; reasoning effort is ignored by this provider."
+    ? "Zen chat-completions models. Free without billing: " + ZEN_FREE.join(", ") +
+      ". Paid ones (kimi, glm, …) need a payment method at opencode.ai."
     : "Any OpenRouter model slug.";
 }
 
@@ -254,7 +263,7 @@ $("key-check").addEventListener("click", async () => {
   const v = $("key-input").value.trim();
   const note = $("key-verify");
   if (v.length < 20) { note.textContent = "!! that does not look like an API key"; return; }
-  note.textContent = "checking with OpenRouter…";
+  note.textContent = "checking with " + (get_provider_label()) + "…";
   const d = await validateKey(v);
   note.textContent = d.ok
     ? `valid — ${d.label}, used $${d.usage}${d.limit ? " of $" + d.limit : ""}`

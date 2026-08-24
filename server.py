@@ -387,14 +387,17 @@ def run_agent(messages: list, api_key: str, should_cancel=None, effort: str = "m
                   soul_block=("Personality & style:\n" + get_soul())
                   if get_soul() else "")}]
     convo += messages[-MAX_HISTORY:]
+    empty_retries = 0
     for _step in range(MAX_STEPS):
         if should_cancel and should_cancel():
             yield {"type": "cancelled"}
             return
         yield {"type": "status", "stage": "thinking"}
         parts, calls, finish = [], {}, None
+        got_any = False
         try:
             for chunk in call_openrouter_stream(convo, api_key, effort):
+                got_any = True
                 chs = chunk.get("choices") or []
                 if not chs:
                     continue
@@ -416,11 +419,31 @@ def run_agent(messages: list, api_key: str, should_cancel=None, effort: str = "m
                     finish = chs[0]["finish_reason"]
         except urllib.error.HTTPError as e:
             detail = e.read()[:400].decode(errors="replace")
+            # transient upstream errors get retried before giving up
+            if e.code in (408, 429, 500, 502, 503, 504) and empty_retries < 2:
+                empty_retries += 1
+                yield {"type": "status",
+                       "stage": f"provider busy (HTTP {e.code}) — retrying ({empty_retries}/2)"}
+                time.sleep(3 * empty_retries)
+                continue
             yield {"type": "error",
                    "message": f"OpenRouter HTTP {e.code}: {detail}"}
             return
         except Exception as e:
             yield {"type": "error", "message": f"request failed: {e}"}
+            return
+
+        # --- premature/empty stream guard -------------------------------
+        if not got_any or (not calls and not "".join(parts).strip()):
+            empty_retries += 1
+            if empty_retries <= 2:
+                yield {"type": "status",
+                       "stage": f"empty response from provider — retrying ({empty_retries}/2)"}
+                time.sleep(2 * empty_retries)
+                continue
+            yield {"type": "error",
+                   "message": "Model stream ended with no content after 3 attempts. "
+                              "This is usually a temporary upstream issue — try again shortly."}
             return
 
         msg = {"role": "assistant", "content": "".join(parts) or None}

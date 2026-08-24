@@ -85,6 +85,54 @@ The app binds `127.0.0.1` by default — put it behind nginx/TLS rather than
 exposing the port. Anyone who can reach this UI can run shell commands as the
 service user; keep it behind HTTPS + a strong password.
 
+## Uninstall
+
+### Installed via `install.sh`
+
+From the repo directory (or any copy of `install.sh`):
+
+```bash
+sudo bash install.sh --uninstall            # remove service + nginx vhost, keep your data
+sudo bash install.sh --uninstall --purge    # ...and also delete all data
+```
+
+What this removes:
+
+| Removed                                   | Kept (unless `--purge`)                     |
+|-------------------------------------------|---------------------------------------------|
+| `vps-assistant` systemd unit (stopped)    | `/opt/vps-assistant/data/` — your API key,  |
+| Its nginx vhost (only the domain it       | password hash and session secret            |
+| recorded at install time)                 | The TLS certificate (`/etc/letsencrypt/…`)  |
+
+After a `--purge`, nothing of the app remains on the machine except possibly
+the TLS certificate — see below if you want that gone too.
+
+> Your OpenRouter key is **not** revoked by uninstalling. If it was stored on
+> the server, also delete/disable it at <https://openrouter.ai/keys>.
+
+### Manual cleanup (template-based installs)
+
+If you deployed manually from `deploy/` instead:
+
+```bash
+systemctl disable --now vps-assistant
+sudo rm -f /etc/systemd/system/vps-assistant.service && sudo systemctl daemon-reload
+
+# nginx vhost (adjust the domain)
+sudo rm -f /etc/nginx/sites-enabled/vps.example.com \
+           /etc/nginx/sites-available/vps.example.com
+sudo systemctl reload nginx
+
+# optional: app files + data (API key, password)
+sudo rm -rf /opt/vps-assistant
+
+# optional: release the TLS certificate
+sudo certbot delete --cert-name vps.example.com
+```
+
+Finally, if you added a DNS A record for the app, delete it in your DNS panel
+whenever you like.
+
 ## Security notes
 
 - Session cookies are HMAC-signed (`data/session_secret`, chmod 600), HttpOnly,

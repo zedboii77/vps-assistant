@@ -267,7 +267,7 @@ function showHero() {
   const hero = document.createElement("div");
   hero.className = "empty-hero";
   hero.innerHTML = `
-    <p class="hero-title">vpsa<span class="cursor"> </span></p>
+    <p class="hero-title">vpsa_</p>
     <p class="hero-tag">connected to local vps · shell access enabled · be specific</p>
     <div class="suggestions">
       <button data-q="Check overall server health: disk, memory, CPU load, failed systemd services">server health check</button>
@@ -391,6 +391,15 @@ function attachStream(taskId, replay) {
       if (bubble) { bubble.innerHTML = mdRender(rawText) + '<span class="cursor"></span>'; scrollDown(); }
     }, 90);
   };
+  /* final render without the blinking cursor */
+  const finalize = () => {
+    renderQueued = false;
+    if (bubble) {
+      bubble.innerHTML = mdRender(rawText) || "(empty reply)";
+      scrollDown();
+    }
+    bubble = null;
+  };
   const handle = (ev) => {
     if (ev.type === "delta") {
       if (!bubble) bubble = addAssistantMsg();
@@ -437,6 +446,7 @@ function attachStream(taskId, replay) {
   eventSource.onmessage = (e) => {
     let ev; try { ev = JSON.parse(e.data); } catch { return; }
     if (ev.type === "done") {
+      finalize();
       detachStream();
       refreshChatList();
       return;

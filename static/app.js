@@ -38,6 +38,13 @@ function mdRender(src) {
 }
 
 /* ---------- boot ---------- */
+function enterApp() {
+  $("auth").classList.add("hidden");
+  $("app").classList.remove("hidden");
+  refreshKeyStatus();
+  loadHistory() || showHero();
+}
+
 async function boot() {
   const st = await fetch("/auth/state").then((r) => r.json());
   if (st.mode === "setup") {
@@ -46,6 +53,10 @@ async function boot() {
     $("auth-pass").setAttribute("autocomplete", "new-password");
   } else {
     $("auth-pass").setAttribute("autocomplete", "current-password");
+  }
+  if (st.authenticated) {
+    enterApp();               // valid session cookie — skip the login form
+    return;
   }
   $("auth").classList.remove("hidden");
   $("auth-form").dataset.mode = st.mode;
@@ -65,10 +76,7 @@ $("auth-form").addEventListener("submit", async (e) => {
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || "failed");
-    $("auth").classList.add("hidden");
-    $("app").classList.remove("hidden");
-    await refreshKeyStatus();
-    showHero();
+    enterApp();
   } catch (err) {
     $("auth-err").textContent = err.message;
   } finally {
@@ -76,6 +84,40 @@ $("auth-form").addEventListener("submit", async (e) => {
     $("auth-pass").value = "";
   }
 });
+
+/* ---------- local persistence (chats survive refresh) ---------- */
+const LS_KEY = "vpsa_convo_v1";
+
+function saveHistory() {
+  try {
+    // tool chips are transient; only durable text roles are stored
+    localStorage.setItem(LS_KEY, JSON.stringify(convo.slice(-200)));
+  } catch { /* storage unavailable/full */ }
+}
+
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return false;
+    const saved = JSON.parse(raw);
+    if (!Array.isArray(saved)) return false;
+    convo = saved.filter((m) =>
+      m && (m.role === "user" || m.role === "assistant") &&
+      typeof m.content === "string" && m.content.trim());
+    if (!convo.length) return false;
+    for (const m of convo) {
+      if (m.role === "user") {
+        addUserMsg(m.content);
+      } else {
+        const b = addAssistantMsg();
+        b.innerHTML = mdRender(m.content);
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /* ---------- key / settings ---------- */
 async function refreshKeyStatus() {
@@ -224,6 +266,7 @@ async function doSend() {
   }
 
   convo.push({ role: "user", content: text });
+  saveHistory();
   input.value = "";
   autoGrow();
   addUserMsg(text);
@@ -309,7 +352,10 @@ async function doSend() {
         } else if (ev.type === "done") {
           if (bubble) {
             bubble.innerHTML = mdRender(rawText) || "(empty reply)";
-            if (rawText.trim()) convo.push({ role: "assistant", content: rawText });
+            if (rawText.trim()) {
+              convo.push({ role: "assistant", content: rawText });
+              saveHistory();
+            }
           }
         }
       }
@@ -319,9 +365,13 @@ async function doSend() {
       if (!bubble) bubble = addAssistantMsg();
       bubble.innerHTML = `<span style="color:var(--danger)">⚠ ${esc(err.message)}</span>`;
       convo.pop(); // don't keep the user msg if the turn failed hard
+      saveHistory();
     } else if (bubble) {
       bubble.innerHTML = mdRender(rawText) + " <em>(stopped)</em>";
-      if (rawText.trim()) convo.push({ role: "assistant", content: rawText });
+      if (rawText.trim()) {
+        convo.push({ role: "assistant", content: rawText });
+        saveHistory();
+      }
     }
   } finally {
     setStatus("");
@@ -398,6 +448,7 @@ if (!SR) {
 
 $("btn-newchat").addEventListener("click", () => {
   convo = [];
+  try { localStorage.removeItem(LS_KEY); } catch {}
   showHero();
 });
 

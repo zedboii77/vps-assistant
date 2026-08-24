@@ -17,6 +17,7 @@
   /* the one deliberate exception to monochrome: errors/warnings */
   --red: #f05555;
   --danger: #f05555; /* legacy alias used by inline styles */
+  --blue: #79b8ff;   /* user prompt accent */
 }
 
 * { box-sizing: border-box; }
@@ -275,7 +276,7 @@ code, pre {
   position: absolute;
   left: 0;
   top: 1px;
-  color: var(--dim);
+  color: var(--blue);
 }
 .msg.assistant .bubble::before {
   content: "vpsa>";

@@ -13,7 +13,7 @@
 <!-- auth -->
 <div id="auth" class="auth-wrap hidden">
   <form id="auth-form" class="auth-card">
-    <h1>vps-assistant v1.0</h1>
+    <h1>vps-assistant v1.1</h1>
     <p id="auth-sub">authentication required — enter password</p>
     <input id="auth-pass" type="password" placeholder="password" autocomplete="current-password" required minlength="8">
     <button type="submit" id="auth-btn">[ unlock ]</button>
@@ -23,44 +23,58 @@
 
 <!-- app -->
 <div id="app" class="app hidden">
-  <header class="topbar">
-    <div class="brand">vpsa</div>
-    <div class="top-actions">
-      <span id="model-badge" class="badge" title="OpenRouter model">model</span>
-      <button id="btn-settings" class="icon-btn">cfg</button>
-      <button id="btn-newchat" class="icon-btn">new</button>
-    </div>
-  </header>
 
-  <main id="chat" class="chat"></main>
-
-  <footer class="composer-wrap">
-    <div class="composer">
-      <span class="prompt-char">&gt;</span>
-      <textarea id="input" rows="1" placeholder="type a command or question…"
-        enterkeyhint="enter"></textarea>
-      <button id="btn-mic" aria-label="Dictate" title="Voice input">mic</button>
-      <button id="btn-send" aria-label="Send">send</button>
+  <aside id="sidebar" class="sidebar">
+    <div class="side-head">
+      <span class="side-title">chats</span>
+      <button id="btn-newchat" class="mini-btn">new</button>
     </div>
-    <p class="hint">enter = newline · send button transmits · agent may execute shell (destructive ops require approval)</p>
-  </footer>
+    <nav id="chat-list" class="chat-list"></nav>
+    <div class="side-foot">
+      <button id="btn-settings" class="side-btn">cfg — settings</button>
+      <button id="btn-logout" class="side-btn">exit — log out</button>
+    </div>
+  </aside>
+  <div id="backdrop" class="backdrop"></div>
+
+  <div class="main">
+    <header class="topbar">
+      <button id="btn-menu" class="icon-btn" aria-label="Chats">≡</button>
+      <div class="brand">vpsa</div>
+      <div class="top-actions">
+        <span id="model-badge" class="badge" title="OpenRouter model">model</span>
+        <button id="btn-stop" class="icon-btn hidden" title="Stop the running task">stop</button>
+      </div>
+    </header>
+
+    <main id="chat" class="chat"></main>
+
+    <footer class="composer-wrap">
+      <div class="composer">
+        <span class="prompt-char">&gt;</span>
+        <textarea id="input" rows="1" placeholder="type a command or question…"
+          enterkeyhint="enter"></textarea>
+        <button id="btn-mic" aria-label="Dictate" title="Voice input">mic</button>
+        <button id="btn-send" aria-label="Send">send</button>
+      </div>
+      <p class="hint">enter = newline · send transmits · tasks run server-side and survive disconnects</p>
+    </footer>
+  </div>
 </div>
 
 <!-- settings modal -->
 <div id="settings" class="modal hidden">
   <div class="modal-card">
-    <div class="modal-head"><h2>Settings</h2><button id="settings-close" class="icon-btn">✕</button></div>
+    <div class="modal-head"><h2>settings</h2><button id="settings-close" class="mini-btn">esc</button></div>
     <label class="fld-label">OpenRouter API key</label>
     <div class="key-row">
       <code id="key-status" class="key-status">…</code>
-      <button id="key-toggle" class="mini-btn">Change</button>
+      <button id="key-toggle" class="mini-btn">set</button>
     </div>
     <input id="key-input" type="password" placeholder="sk-or-v1-…" class="hidden">
-    <button id="key-save" class="hidden mini-btn primary">Save key</button>
+    <button id="key-save" class="hidden mini-btn primary">save key</button>
     <label class="fld-label">Model</label>
     <code id="model-name" class="key-status">…</code>
-    <hr>
-    <button id="btn-logout" class="mini-btn danger">Log out</button>
   </div>
 </div>
 

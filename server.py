@@ -11,6 +11,14 @@ Environment:
   VPSA_DATA_DIR      state directory        (default <script_dir>/data)
   VPSA_MODEL         OpenRouter model slug  (default stealth/ox-alpha)
   OPENROUTER_API_KEY optional pre-set key   (otherwise entered in Settings UI)
+
+Architecture notes:
+  - Chats persist server-side as JSON files under DATA_DIR/chats/.
+  - Agent turns run as detached background tasks: if the browser disconnects,
+    the task keeps running and its events can be replayed/re-attached via
+    GET /chat/stream?task=<id>&from=<n>.
+  - Stop is cooperative: it takes effect between agent steps (a shell command
+    already running is allowed to finish, bounded by its own timeout).
 """
 
 import base64
@@ -22,7 +30,6 @@ import re
 import secrets
 import shutil
 import socket
-import sqlite3
 import subprocess
 import sys
 import threading
@@ -48,6 +55,8 @@ os.makedirs(DATA_DIR, exist_ok=True)
 AUTH_FILE = os.path.join(DATA_DIR, "auth.json")
 KEY_FILE = os.path.join(DATA_DIR, "openrouter_key")
 SECRET_FILE = os.path.join(DATA_DIR, "session_secret")
+CHATS_DIR = os.path.join(DATA_DIR, "chats")
+os.makedirs(CHATS_DIR, exist_ok=True)
 
 for _p in (AUTH_FILE, KEY_FILE, SECRET_FILE):
     if not os.path.exists(_p):
@@ -292,12 +301,16 @@ def call_openrouter_stream(convo: list, api_key: str):
         yield chunk
 
 
-def run_agent(messages: list, api_key: str):
-    """Full tool-loop. Yields UI events; final text arrives as delta events."""
+def run_agent(messages: list, api_key: str, should_cancel=None):
+    """Full tool-loop. Yields UI events; final text arrives as delta events.
+    `should_cancel` is polled between steps; when true, yields 'cancelled'."""
     convo = [{"role": "system",
               "content": SYSTEM_PROMPT.format(ctx=system_context())}]
     convo += messages[-MAX_HISTORY:]
     for _step in range(MAX_STEPS):
+        if should_cancel and should_cancel():
+            yield {"type": "cancelled"}
+            return
         yield {"type": "status", "stage": "thinking"}
         parts, calls, finish = [], {}, None
         try:
@@ -346,6 +359,9 @@ def run_agent(messages: list, api_key: str):
             return
 
         for i, s in sorted(calls.items()):
+            if should_cancel and should_cancel():
+                yield {"type": "cancelled"}
+                return
             name = s["name"]
             try:
                 args = json.loads(s["args"] or "{}")
@@ -364,6 +380,109 @@ def run_agent(messages: list, api_key: str):
                           "content": out_json[:24000]})
     yield {"type": "error",
            "message": f"Gave up after {MAX_STEPS} tool rounds without a final answer."}
+
+
+# ---------------------------------------------------------------- chats store
+
+def valid_cid(cid) -> bool:
+    return isinstance(cid, str) and bool(re.fullmatch(r"[0-9a-f]{16}", cid))
+
+
+def chat_path(cid: str) -> str:
+    return os.path.join(CHATS_DIR, cid + ".json")
+
+
+def load_chat(cid: str) -> dict | None:
+    try:
+        with open(chat_path(cid)) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def save_chat(chat: dict) -> None:
+    tmp = chat_path(chat["id"]) + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(chat, f)
+    os.replace(tmp, chat_path(chat["id"]))
+
+
+def new_chat() -> dict:
+    chat = {"id": secrets.token_hex(8), "title": "untitled",
+            "created": time.time(), "updated": time.time(), "messages": []}
+    save_chat(chat)
+    return chat
+
+
+def list_chats() -> list:
+    out = []
+    for fn in os.listdir(CHATS_DIR):
+        if not fn.endswith(".json"):
+            continue
+        c = load_chat(fn[:-5])
+        if c:
+            out.append({"id": c["id"], "title": c.get("title", "untitled"),
+                        "updated": c.get("updated", 0),
+                        "n_messages": len(c.get("messages", [])),
+                        "running": c["id"] in CHAT_TASK})
+    out.sort(key=lambda c: -c["updated"])
+    return out
+
+
+def touch_chat(chat: dict) -> None:
+    chat["updated"] = time.time()
+    save_chat(chat)
+
+
+# ---------------------------------------------------------------- task runner
+
+class Task:
+    def __init__(self, chat_id: str):
+        self.id = secrets.token_hex(8)
+        self.chat_id = chat_id
+        self.events: list[dict] = []
+        self.cond = threading.Condition()
+        self.done = False
+        self.cancel = False
+
+
+TASKS: dict[str, Task] = {}
+CHAT_TASK: dict[str, str] = {}   # chat_id -> running task_id
+STATE_LOCK = threading.Lock()
+
+
+def run_agent_task(task: Task, api_key: str) -> None:
+    """Detached worker: streams events into the task log and persists the
+    final assistant message to the chat file. Survives client disconnects."""
+    acc: list[str] = []
+    try:
+        chat = load_chat(task.chat_id)
+        msgs = chat["messages"] if chat else []
+        for ev in run_agent(msgs, api_key, should_cancel=lambda: task.cancel):
+            with task.cond:
+                task.events.append(ev)
+                task.cond.notify_all()
+            if ev.get("type") == "delta":
+                acc.append(ev.get("text", ""))
+            if ev.get("type") in ("cancelled",):
+                break
+    except Exception as e:  # defensive: never leave the task hanging
+        with task.cond:
+            task.events.append({"type": "error", "message": f"internal: {e}"})
+            task.cond.notify_all()
+    finally:
+        text = "".join(acc).strip()
+        if text:
+            chat = load_chat(task.chat_id)
+            if chat:
+                chat["messages"].append({"role": "assistant", "content": text})
+                touch_chat(chat)
+        with task.cond:
+            task.done = True
+            task.cond.notify_all()
+        with STATE_LOCK:
+            TASKS.pop(task.id, None)
+            CHAT_TASK.pop(task.chat_id, None)
 
 
 # ---------------------------------------------------------------- HTTP
@@ -402,12 +521,6 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _redirect(self, loc: str):
-        self.send_response(303)
-        self.send_header("Location", loc)
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-
     def _cookie_token(self) -> str | None:
         for part in (self.headers.get("Cookie") or "").split(";"):
             k, _, v = part.strip().partition("=")
@@ -424,37 +537,48 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- routes -----------------------------------------------------------
     def do_GET(self):
-        path = self.path.split("?", 1)[0]
+        path, _, qs = self.path.partition("?")
+        segs = [s for s in path.split("/") if s]
         if path == "/health":
             return self._send(200, {"ok": True})
         if path == "/auth/state":
             mode = "setup" if load_auth() is None else "login"
             return self._send(200, {"mode": mode,
                                     "authenticated": self._authed()})
+        # static files are public (the login page needs them)
+        spath = path if path != "/" else "/index.html"
+        fname = os.path.normpath(spath).lstrip("/")
+        full = os.path.join(STATIC_DIR, fname)
+        if fname and full.startswith(STATIC_DIR) and os.path.isfile(full):
+            ext = os.path.splitext(full)[1]
+            with open(full, "rb") as f:
+                return self._send(200, raw=f.read(),
+                                  ctype=MIME.get(ext, "application/octet-stream"),
+                                  extra_headers=[("Cache-Control", "no-cache")])
+        if not self._authed():
+            return self._send(401, {"error": "not authenticated"})
         if path == "/auth/key":
-            if not self._authed():
-                return self._send(401, {"error": "not authenticated"})
             k = get_api_key()
             return self._send(200, {"configured": bool(k),
                                     "masked": mask_key(k) if k else None,
                                     "model": MODEL})
-        if path == "/chat":
-            return self._send(405, {"error": "POST only"})
-        # static files
-        if path == "/":
-            path = "/index.html"
-        fname = os.path.normpath(path).lstrip("/")
-        full = os.path.join(STATIC_DIR, fname)
-        if not full.startswith(STATIC_DIR) or not os.path.isfile(full):
-            return self._send(404, {"error": "not found"})
-        ext = os.path.splitext(full)[1]
-        with open(full, "rb") as f:
-            self._send(200, raw=f.read(),
-                       ctype=MIME.get(ext, "application/octet-stream"),
-                       extra_headers=[("Cache-Control", "no-cache")])
+        if path == "/chats":
+            return self._send(200, {"chats": list_chats()})
+        if len(segs) == 2 and segs[0] == "chats" and valid_cid(segs[1]):
+            chat = load_chat(segs[1])
+            if not chat:
+                return self._send(404, {"error": "chat not found"})
+            task_id = CHAT_TASK.get(chat["id"])
+            return self._send(200, {"id": chat["id"], "title": chat["title"],
+                                    "messages": chat["messages"],
+                                    "running": bool(task_id),
+                                    "task_id": task_id})
+        if segs and segs[0] == "chat" and "stream" in segs[1:]:
+            return self.route_stream(qs)
+        return self._send(404, {"error": "not found"})
 
     def do_POST(self):
-        path = self.path.split("?", 1)[0]
+        path, _, _qs = self.path.partition("?")
         ip = self._client_ip()
         if path == "/auth/setup":
             if load_auth() is not None:
@@ -479,9 +603,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/auth/logout":
             return self._send(200, {"ok": True}, extra_headers=[
                 ("Set-Cookie", f"{COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax")])
+        if not self._authed():
+            return self._send(401, {"error": "not authenticated"})
         if path == "/auth/key":
-            if not self._authed():
-                return self._send(401, {"error": "not authenticated"})
             k = str(self._body().get("api_key", "")).strip()
             if not k.startswith("sk-or-"):
                 return self._send(400, {"error": "that does not look like an OpenRouter key"})
@@ -489,8 +613,37 @@ class Handler(BaseHTTPRequestHandler):
                 f.write(k)
             os.chmod(KEY_FILE, 0o600)
             return self._send(200, {"ok": True, "masked": mask_key(k)})
+        if path == "/chats":
+            chat = new_chat()
+            return self._send(200, {"id": chat["id"]})
         if path == "/chat":
-            return self.route_chat(ip)
+            return self.route_chat_start()
+        if path == "/chat/stop":
+            task_id = str(self._body().get("task_id", ""))
+            with STATE_LOCK:
+                task = TASKS.get(task_id)
+                if task:
+                    task.cancel = True
+            return self._send(200, {"ok": bool(task),
+                                    "note": "stop takes effect between agent steps"})
+        return self._send(404, {"error": "not found"})
+
+    def do_DELETE(self):
+        path, _, _qs = self.path.partition("?")
+        if not self._authed():
+            return self._send(401, {"error": "not authenticated"})
+        segs = [s for s in path.split("/") if s]
+        if len(segs) == 2 and segs[0] == "chats" and valid_cid(segs[1]):
+            cid = segs[1]
+            with STATE_LOCK:
+                tid = CHAT_TASK.get(cid)
+                if tid and tid in TASKS:
+                    TASKS[tid].cancel = True
+            try:
+                os.remove(chat_path(cid))
+            except FileNotFoundError:
+                return self._send(404, {"error": "chat not found"})
+            return self._send(200, {"ok": True})
         return self._send(404, {"error": "not found"})
 
     def _set_session(self):
@@ -499,25 +652,48 @@ class Handler(BaseHTTPRequestHandler):
             ("Set-Cookie",
              f"{COOKIE_NAME}={make_token()}; Max-Age={SESSION_TTL}; Path=/; HttpOnly; SameSite=Lax{secure}")])
 
-    # -- SSE chat ----------------------------------------------------------
-    def route_chat(self, ip):
-        if not self._authed():
-            return self._send(401, {"error": "not authenticated"})
+    # -- chat start (detached task) ----------------------------------------
+    def route_chat_start(self):
         body = self._body()
-        msgs = body.get("messages")
-        if not isinstance(msgs, list) or not msgs:
-            return self._send(400, {"error": "messages required"})
-        clean = []
-        for m in msgs[-MAX_HISTORY:]:
-            if isinstance(m, dict) and m.get("role") in ("user", "assistant"):
-                txt = str(m.get("content") or "")
-                if txt:
-                    clean.append({"role": m["role"], "content": txt[-32000:]})
-        if not clean:
-            return self._send(400, {"error": "empty conversation"})
+        cid = body.get("chat_id")
+        content = str(body.get("content", "")).strip()
+        if not valid_cid(cid):
+            return self._send(400, {"error": "chat_id required"})
+        if not content:
+            return self._send(400, {"error": "content required"})
+        chat = load_chat(cid)
+        if not chat:
+            return self._send(404, {"error": "chat not found"})
         api_key = get_api_key()
         if not api_key:
             return self._send(400, {"error": "no OpenRouter key configured — open Settings"})
+        with STATE_LOCK:
+            if cid in CHAT_TASK:
+                return self._send(409, {"error": "a task is already running for this chat"})
+            chat["messages"].append({"role": "user",
+                                     "content": content[-32000:]})
+            if chat.get("title") in ("", "untitled"):
+                chat["title"] = content.replace("\n", " ")[:48]
+            touch_chat(chat)
+            task = Task(cid)
+            TASKS[task.id] = task
+            CHAT_TASK[cid] = task.id
+        threading.Thread(target=run_agent_task, args=(task, api_key),
+                         daemon=True).start()
+        return self._send(202, {"task_id": task.id, "chat_id": cid})
+
+    # -- SSE stream (replayable, disconnect-safe) ---------------------------
+    def route_stream(self, qs: str):
+        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+        task_id = params.get("task", "")
+        try:
+            from_idx = max(int(params.get("from", "0")), 0)
+        except ValueError:
+            from_idx = 0
+        with STATE_LOCK:
+            task = TASKS.get(task_id)
+        if not task:
+            return self._send(404, {"error": "task not found (already finished? load the chat instead)"})
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -530,15 +706,29 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         try:
-            for ev in run_agent(clean, api_key):
-                emit(ev)
+            idx = from_idx
+            while True:
+                with task.cond:
+                    while idx >= len(task.events) and not task.done:
+                        task.cond.wait(timeout=15)
+                    snap = task.events[idx:]
+                    done = task.done
+                if snap:
+                    for ev in snap:
+                        emit(ev)
+                    idx += len(snap)
+                elif done:
+                    break
+                else:
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
             emit({"type": "done"})
         except (BrokenPipeError, ConnectionResetError):
-            print(f"[chat] client {ip} disconnected mid-stream", flush=True)
+            print("[stream] subscriber disconnected (task keeps running)",
+                  flush=True)
         except Exception as e:
             try:
                 emit({"type": "error", "message": str(e)})
-                emit({"type": "done"})
             except Exception:
                 pass
 

@@ -1,13 +1,15 @@
-/* VPS Assistant frontend */
+/* VPS Assistant — terminal frontend (server-persisted chats, reattachable tasks) */
 "use strict";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => s.replace(/[&<>"']/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-let convo = [];          // {role, content}
-let streaming = false;
-let abortCtl = null;
+let chatId = null;        // active chat id
+let streaming = false;    // a task is attached/running in this tab
+let currentTask = null;   // task id we're streaming
+let streamAbort = null;
+let eventSource = null;
 
 /* ---------- tiny markdown ---------- */
 function mdRender(src) {
@@ -25,39 +27,36 @@ function mdRender(src) {
   txt = txt.replace(/^# (.*)$/gm, "<h1>$1</h1>");
   txt = txt.replace(/^\s*[-•] (.*)$/gm, "<li>$1</li>")
            .replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, "<ul>$1</ul>");
-  // line breaks outside of pre blocks
   const segs = txt.split(/(<pre><code>[\s\S]*?<\/code><\/pre>)/);
   for (let i = 0; i < segs.length; i++) {
-    if (!segs[i].startsWith("<pre>")) {
-      segs[i] = segs[i].replace(/\n/g, "<br>");
-    }
+    if (!segs[i].startsWith("<pre>")) segs[i] = segs[i].replace(/\n/g, "<br>");
   }
   txt = segs.join("");
-  txt = txt.replace(/\u0000B(\d+)\u0000/g, (_, i) => blocks[+i]);
-  return txt;
+  return txt.replace(/\u0000B(\d+)\u0000/g, (_, i) => blocks[+i]);
 }
 
-/* ---------- boot ---------- */
+/* ---------- boot / auth ---------- */
 function enterApp() {
   $("auth").classList.add("hidden");
   $("app").classList.remove("hidden");
   refreshKeyStatus();
-  loadHistory() || showHero();
+  refreshChatList().then(() => {
+    const first = ($("chat-list").querySelector(".chat-item") || {}).dataset?.id;
+    if (first) openChat(first);
+    else newChat();
+  });
 }
 
 async function boot() {
   const st = await fetch("/auth/state").then((r) => r.json());
   if (st.mode === "setup") {
-    $("auth-sub").textContent = "Create your password (first run)";
-    $("auth-btn").textContent = "Create & unlock";
+    $("auth-sub").textContent = "first run — create password (min 8 chars)";
+    $("auth-btn").textContent = "[ create & unlock ]";
     $("auth-pass").setAttribute("autocomplete", "new-password");
   } else {
     $("auth-pass").setAttribute("autocomplete", "current-password");
   }
-  if (st.authenticated) {
-    enterApp();               // valid session cookie — skip the login form
-    return;
-  }
+  if (st.authenticated) { enterApp(); return; }
   $("auth").classList.remove("hidden");
   $("auth-form").dataset.mode = st.mode;
 }
@@ -85,51 +84,14 @@ $("auth-form").addEventListener("submit", async (e) => {
   }
 });
 
-/* ---------- local persistence (chats survive refresh) ---------- */
-const LS_KEY = "vpsa_convo_v1";
-
-function saveHistory() {
-  try {
-    // tool chips are transient; only durable text roles are stored
-    localStorage.setItem(LS_KEY, JSON.stringify(convo.slice(-200)));
-  } catch { /* storage unavailable/full */ }
-}
-
-function loadHistory() {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return false;
-    const saved = JSON.parse(raw);
-    if (!Array.isArray(saved)) return false;
-    convo = saved.filter((m) =>
-      m && (m.role === "user" || m.role === "assistant") &&
-      typeof m.content === "string" && m.content.trim());
-    if (!convo.length) return false;
-    for (const m of convo) {
-      if (m.role === "user") {
-        addUserMsg(m.content);
-      } else {
-        const b = addAssistantMsg();
-        b.innerHTML = mdRender(m.content);
-      }
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /* ---------- key / settings ---------- */
 async function refreshKeyStatus() {
   const k = await fetch("/auth/key").then((r) => r.json());
   $("model-badge").textContent = k.model || "?";
   $("model-name").textContent = k.model || "?";
   $("key-status").textContent = k.configured
-    ? `${k.masked} (configured)`
-    : "not configured — paste your OpenRouter key";
-  return k;
+    ? k.masked + " configured" : "not configured";
 }
-
 $("btn-settings").addEventListener("click", () => {
   $("settings").classList.remove("hidden");
   $("key-input").classList.add("hidden");
@@ -150,7 +112,7 @@ $("key-save").addEventListener("click", async () => {
     body: JSON.stringify({ api_key: v }),
   });
   const d = await r.json();
-  $("key-status").textContent = r.ok ? `saved ${d.masked}` : (d.error || "save failed");
+  $("key-status").textContent = r.ok ? "saved " + d.masked : (d.error || "save failed");
   $("key-input").value = "";
   $("key-input").classList.add("hidden");
   $("key-save").classList.add("hidden");
@@ -160,6 +122,49 @@ $("btn-logout").addEventListener("click", async () => {
   await fetch("/auth/logout", { method: "POST" });
   location.reload();
 });
+
+/* ---------- sidebar / chat list ---------- */
+async function refreshChatList() {
+  const d = await fetch("/chats").then((r) => r.json());
+  const list = $("chat-list");
+  list.innerHTML = "";
+  for (const c of d.chats || []) {
+    const el = document.createElement("div");
+    el.className = "chat-item" + (c.id === chatId ? " active" : "");
+    el.dataset.id = c.id;
+    const runMark = c.running ? '<span class="run-mark">●</span>' : "";
+    el.innerHTML = `<span class="ci-title">${esc(c.title)}</span>${runMark}`;
+    el.title = `${c.n_messages} messages`;
+    el.addEventListener("click", () => openChat(c.id));
+    list.appendChild(el);
+  }
+  return d.chats || [];
+}
+
+function toggleSidebar(force) {
+  $("sidebar").classList.toggle("open", force);
+  $("backdrop").classList.toggle("show", force);
+}
+$("btn-menu").addEventListener("click", () => toggleSidebar());
+$("backdrop").addEventListener("click", () => toggleSidebar(false));
+
+async function newChat() {
+  const d = await fetch("/chats", { method: "POST" }).then((r) => r.json());
+  chatId = d.id;
+  await refreshChatList();
+  renderChat({ id: chatId, messages: [], running: false });
+  if (window.innerWidth <= 900) toggleSidebar(false);
+}
+
+async function openChat(id) {
+  if (streaming) detachStream();
+  const d = await fetch(`/chats/${id}`).then((r) => r.json());
+  chatId = id;
+  renderChat(d);
+  refreshChatList();
+  if (d.running && d.task_id) attachStream(d.task_id, true);
+  if (window.innerWidth <= 900) toggleSidebar(false);
+}
 
 /* ---------- rendering ---------- */
 const chatEl = $("chat");
@@ -173,14 +178,10 @@ function ensureInner() {
   }
   return chatInner;
 }
-
-function scrollDown() {
-  chatEl.scrollTop = chatEl.scrollHeight;
-}
+const scrollDown = () => { chatEl.scrollTop = chatEl.scrollHeight; };
 
 function showHero() {
-  chatEl.innerHTML = "";
-  chatInner = null;
+  chatEl.innerHTML = ""; chatInner = null;
   const hero = document.createElement("div");
   hero.className = "empty-hero";
   hero.innerHTML = `
@@ -194,7 +195,18 @@ function showHero() {
     </div>`;
   hero.querySelectorAll("button[data-q]").forEach((b) =>
     b.addEventListener("click", () => { $("input").value = b.dataset.q; doSend(); }));
-  chatEl.appendChild(hero);
+  ensureInner().appendChild(hero);
+  scrollDown();
+}
+
+function renderChat(chat) {
+  chatEl.innerHTML = ""; chatInner = null;
+  if (!chat.messages.length) { showHero(); return; }
+  for (const m of chat.messages) {
+    if (m.role === "user") addUserMsg(m.content);
+    else addAssistantMsg(mdRender(m.content));
+  }
+  scrollDown();
 }
 
 function addUserMsg(text) {
@@ -206,11 +218,11 @@ function addUserMsg(text) {
   scrollDown();
 }
 
-function addAssistantMsg() {
+function addAssistantMsg(html) {
   ensureInner();
   const el = document.createElement("div");
   el.className = "msg assistant";
-  el.innerHTML = `<div class="bubble"><span class="cursor"></span></div>`;
+  el.innerHTML = `<div class="bubble">${html ?? '<span class="cursor"></span>'}</div>`;
   chatInner.appendChild(el);
   scrollDown();
   return el.querySelector(".bubble");
@@ -225,7 +237,6 @@ function addToolChip(name, brief) {
       <span class="t-brief">${esc(brief)}</span></summary>
     <pre>(running…)</pre>`;
   chatInner.appendChild(chip);
-  chip.open = false;
   scrollDown();
   return chip;
 }
@@ -234,172 +245,153 @@ function setStatus(text) {
   ensureInner();
   let s = chatInner.querySelector(".status-line:last-of-type");
   if (!text) { if (s) s.remove(); return; }
-  if (!s) {
-    s = document.createElement("div");
-    s.className = "status-line";
-    chatInner.appendChild(s);
-  }
+  if (!s) { s = document.createElement("div"); s.className = "status-line"; chatInner.appendChild(s); }
   s.textContent = text;
 }
 
-/* ---------- send / stream ---------- */
-function setBusy(b) {
-  streaming = b;
-  const btn = $("btn-send");
-  btn.disabled = false;
-  btn.textContent = b ? "■" : "➤";
-  $("input").disabled = b;
+function setRunningUI(on) {
+  streaming = on;
+  $("btn-stop").classList.toggle("hidden", !on);
 }
 
-async function doSend() {
-  if (streaming) { abortCtl?.abort(); return; }
-  const input = $("input");
-  const text = input.value.trim();
-  if (!text) return;
-  const keyOk = (await fetch("/auth/key").then((r) => r.json())).configured;
-  if (!keyOk) {
-    $("btn-settings").click();
-    $("key-toggle").click();
-    $("key-status").textContent = "Add your OpenRouter API key first ↓";
-    return;
-  }
-
-  convo.push({ role: "user", content: text });
-  saveHistory();
-  input.value = "";
-  autoGrow();
-  addUserMsg(text);
-  setBusy(true);
-  abortCtl = new AbortController();
-
-  let bubble = null;
-  let rawText = "";
-  let renderQueued = false;
-  const scheduleRender = () => {
-    if (renderQueued) return;
-    renderQueued = true;
-    setTimeout(() => {
-      renderQueued = false;
-      if (bubble) {
-        bubble.innerHTML = mdRender(rawText) + '<span class="cursor"></span>';
-        scrollDown();
-      }
-    }, 90);
-  };
-
-  try {
-    const resp = await fetch("/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: convo }),
-      signal: abortCtl.signal,
-    });
-    if (!resp.ok) {
-      const d = await resp.json().catch(() => ({}));
-      throw new Error(d.error || `HTTP ${resp.status}`);
-    }
-    const reader = resp.body.getReader();
-    const dec = new TextDecoder();
-    let buf = "";
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      let idx;
-      while ((idx = buf.indexOf("\n\n")) !== -1) {
-        const frame = buf.slice(0, idx);
-        buf = buf.slice(idx + 2);
-        if (!frame.startsWith("data:")) continue;
-        let ev;
-        try { ev = JSON.parse(frame.slice(5).trim()); } catch { continue; }
-
-        if (ev.type === "delta") {
-          if (!bubble) bubble = addAssistantMsg();
-          rawText += ev.text;
-          scheduleRender();
-        } else if (ev.type === "tool_start") {
-          if (bubble && !rawText) { bubble.remove(); bubble = null; }
-          ev._chip = addToolChip(ev.name, ev.brief);
-          setStatus(`${ev.name} running…`);
-        } else if (ev.type === "tool_end") {
-          const chip = ev._chip;
-          if (chip) {
-            chip.classList.add("done");
-            chip.classList.toggle("failed", !ev.ok);
-            chip.querySelector(".t-ico").textContent = ev.ok ? "ok" : "!!";
-            const pre = chip.querySelector("pre");
-            if (ev.result && ev.result._truncated) {
-              pre.textContent = "(large output truncated in UI — full output was given to the model)";
-            } else {
-              const r = ev.result || {};
-              const parts = [];
-              if (r.stdout) parts.push(r.stdout);
-              if (r.stderr) parts.push("[stderr] " + r.stderr);
-              if (r.content !== undefined) parts.push(r.content);
-              if (r.error) parts.push("[error] " + r.error);
-              if (r.bytes_written !== undefined) parts.push(`(${r.bytes_written} bytes written)`);
-              pre.textContent = parts.join("\n") || "(no output)";
-            }
-          }
-          setStatus("");
-        } else if (ev.type === "status") {
-          setStatus(ev.stage === "thinking" ? "thinking…" : "");
-        } else if (ev.type === "error") {
-          if (!bubble) bubble = addAssistantMsg();
-          bubble.innerHTML = `<span class="alert">!! ${esc(ev.message)}</span>`;
-          scrollDown();
-        } else if (ev.type === "done") {
-          if (bubble) {
-            bubble.innerHTML = mdRender(rawText) || "(empty reply)";
-            if (rawText.trim()) {
-              convo.push({ role: "assistant", content: rawText });
-              saveHistory();
-            }
-          }
-        }
-      }
-    }
-  } catch (err) {
-    if (err.name !== "AbortError") {
-      if (!bubble) bubble = addAssistantMsg();
-      bubble.innerHTML = `<span class="alert">!! ${esc(err.message)}</span>`;
-      convo.pop(); // don't keep the user msg if the turn failed hard
-      saveHistory();
-    } else if (bubble) {
-      bubble.innerHTML = mdRender(rawText) + " <em>(stopped)</em>";
-      if (rawText.trim()) {
-        convo.push({ role: "assistant", content: rawText });
-        saveHistory();
-      }
-    }
-  } finally {
-    setStatus("");
-    setBusy(false);
-    abortCtl = null;
-    scrollDown();
-  }
-}
-
-/* ---------- composer ---------- */
+/* ---------- send / task lifecycle ---------- */
 function autoGrow() {
   const t = $("input");
   t.style.height = "auto";
   t.style.height = Math.min(t.scrollHeight, 160) + "px";
 }
 $("input").addEventListener("input", autoGrow);
-// NOTE: sending is intentionally button-only. Enter inserts a newline.
-$("btn-send").addEventListener("click", doSend);
+// sending is button-only by design; Enter inserts a newline
+
+async function doSend() {
+  if (streaming) return;
+  const input = $("input");
+  const text = input.value.trim();
+  if (!text || !chatId) return;
+  const keyOk = (await fetch("/auth/key").then((r) => r.json())).configured;
+  if (!keyOk) {
+    $("btn-settings").click(); $("key-toggle").click();
+    $("key-status").textContent = "add your OpenRouter API key below";
+    return;
+  }
+  input.value = ""; autoGrow();
+
+  const r = await fetch("/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, content: text }),
+  });
+  const d = await r.json();
+  if (!r.ok) {
+    addUserMsg(text);   // still show what you tried
+    addAssistantMsg(`<span class="alert">!! ${esc(d.error || "failed")}</span>`);
+    return;
+  }
+  addUserMsg(text);
+  refreshChatList();
+  attachStream(d.task_id, false);
+}
+
+/* Attach to a task's event stream. `replay` = include events already logged. */
+function attachStream(taskId, replay) {
+  detachStream();
+  currentTask = taskId;
+  setRunningUI(true);
+  let bubble = null, rawText = "", renderQueued = false;
+  const from = replay ? 0 : null;   // server replays full log when from=0
+
+  const scheduleRender = () => {
+    if (renderQueued) return;
+    renderQueued = true;
+    setTimeout(() => {
+      renderQueued = false;
+      if (bubble) { bubble.innerHTML = mdRender(rawText) + '<span class="cursor"></span>'; scrollDown(); }
+    }, 90);
+  };
+  const handle = (ev) => {
+    if (ev.type === "delta") {
+      if (!bubble) bubble = addAssistantMsg();
+      rawText += ev.text;
+      scheduleRender();
+    } else if (ev.type === "tool_start") {
+      if (bubble && !rawText) { bubble.remove(); bubble = null; }
+      ev._chip = addToolChip(ev.name, ev.brief);
+      setStatus(ev.name + " running…");
+    } else if (ev.type === "tool_end") {
+      const chip = ev._chip;
+      if (chip) {
+        chip.classList.add("done");
+        chip.classList.toggle("failed", !ev.ok);
+        chip.querySelector(".t-ico").textContent = ev.ok ? "ok" : "!!";
+        const pre = chip.querySelector("pre");
+        if (ev.result && ev.result._truncated) {
+          pre.textContent = "(large output truncated in UI — full output was given to the model)";
+        } else {
+          const r = ev.result || {}, parts = [];
+          if (r.stdout) parts.push(r.stdout);
+          if (r.stderr) parts.push("[stderr] " + r.stderr);
+          if (r.content !== undefined) parts.push(r.content);
+          if (r.error) parts.push("[error] " + r.error);
+          if (r.bytes_written !== undefined) parts.push(`(${r.bytes_written} bytes written)`);
+          pre.textContent = parts.join("\n") || "(no output)";
+        }
+      }
+      setStatus("");
+    } else if (ev.type === "cancelled") {
+      if (bubble) bubble.innerHTML = mdRender(rawText) + " <em>(stopped)</em>";
+      setStatus("");
+    } else if (ev.type === "error") {
+      if (!bubble) bubble = addAssistantMsg();
+      bubble.innerHTML = `<span class="alert">!! ${esc(ev.message)}</span>`;
+      scrollDown();
+    }
+  };
+
+  const url = `/chat/stream?task=${encodeURIComponent(taskId)}${from !== null ? "&from=0" : ""}`;
+  eventSource = new EventSource(url);
+  eventSource.onmessage = (e) => {
+    let ev; try { ev = JSON.parse(e.data); } catch { return; }
+    if (ev.type === "done") {
+      detachStream();
+      refreshChatList();
+      return;
+    }
+    handle(ev);
+  };
+  eventSource.onerror = () => {
+    // task finished and endpoint went away — reload authoritative state
+    detachStream();
+    if (chatId) openChat(chatId);
+  };
+}
+
+function detachStream() {
+  if (eventSource) { try { eventSource.close(); } catch {} eventSource = null; }
+  setRunningUI(false);
+  setStatus("");
+  currentTask = null;
+}
+
+$("btn-stop").addEventListener("click", async () => {
+  if (!currentTask) return;
+  await fetch("/chat/stop", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ task_id: currentTask }),
+  });
+  setStatus("stop requested — takes effect between steps…");
+});
+
+// Reattach to the active chat's running task after a page reload.
+window.addEventListener("beforeunload", () => { try { eventSource?.close(); } catch {} });
 
 /* ---------- mic dictation (Web Speech API, button-only UX) ---------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 if (!SR) {
-  $("btn-mic").classList.add("hidden");   // unsupported browser: hide entirely
+  $("btn-mic").classList.add("hidden");
 } else {
-  let recog = null;
-  let recording = false;
+  let recog = null, recording = false;
   const micBtn = $("btn-mic");
-
   micBtn.addEventListener("click", () => {
     if (recording) { recog.stop(); return; }
     recog = new SR();
@@ -407,17 +399,14 @@ if (!SR) {
     recog.interimResults = true;
     recog.continuous = true;
     const base = $("input").value;
-
     recog.onstart = () => {
       recording = true;
       micBtn.classList.add("recording");
       micBtn.textContent = "⏹";
-      micBtn.title = "Stop dictation";
       setStatus("listening… speak, then tap ⏹");
     };
     recog.onresult = (e) => {
-      let finalTxt = "";
-      let interim = "";
+      let finalTxt = "", interim = "";
       for (let i = 0; i < e.results.length; i++) {
         if (e.results[i].isFinal) finalTxt += e.results[i][0].transcript;
         else interim += e.results[i][0].transcript;
@@ -429,8 +418,7 @@ if (!SR) {
       if (!recording) return;
       recording = false;
       micBtn.classList.remove("recording");
-      micBtn.textContent = "🎙";
-      micBtn.title = "Voice input";
+      micBtn.textContent = "mic";
       setStatus("");
     };
     recog.onend = stop;
@@ -438,18 +426,10 @@ if (!SR) {
       stop();
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
         setStatus("mic blocked — allow microphone access for this site");
-      } else if (e.error !== "aborted") {
-        setStatus("voice input error: " + e.error);
-      }
+      } else if (e.error !== "aborted") setStatus("voice input error: " + e.error);
     };
-    try { recog.start(); } catch { /* double-start race; ignore */ }
+    try { recog.start(); } catch {}
   });
 }
-
-$("btn-newchat").addEventListener("click", () => {
-  convo = [];
-  try { localStorage.removeItem(LS_KEY); } catch {}
-  showHero();
-});
 
 boot();

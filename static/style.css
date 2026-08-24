@@ -99,9 +99,72 @@ code, pre {
 /* ---------- app shell ---------- */
 .app {
   display: flex;
+  height: 100dvh;
+}
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
   flex-direction: column;
   height: 100dvh;
 }
+
+/* ---------- sidebar ---------- */
+.sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+.side-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.side-title { font-weight: 700; letter-spacing: .5px; }
+.side-title::before { content: "# "; color: var(--faint); }
+.chat-list { flex: 1; overflow-y: auto; padding: 6px 0; }
+.chat-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-left: 2px solid transparent;
+  font-size: 13px;
+}
+.chat-item::before { content: "> "; color: var(--faint); }
+.chat-item:hover { color: var(--fg); background: var(--panel2); }
+.chat-item.active {
+  color: var(--fg);
+  border-left-color: var(--fg);
+  background: var(--panel2);
+}
+.run-mark { color: var(--red); animation: blink 1.1s steps(1) infinite; }
+.side-foot {
+  border-top: 1px solid var(--border);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.side-btn {
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--dim);
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 7px 8px;
+  cursor: pointer;
+}
+.side-btn:hover { color: var(--fg); background: var(--panel2); }
+.backdrop { display: none; }
 .topbar {
   display: flex;
   align-items: center;
@@ -456,6 +519,28 @@ hr {
   border: none;
   border-top: 1px dashed var(--border);
   margin: 16px 0;
+}
+
+#btn-menu { display: none; }
+
+@media (max-width: 900px) {
+  #btn-menu { display: inline-block; }
+  .sidebar {
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    z-index: 60;
+    width: 260px;
+    transform: translateX(-100%);
+    transition: transform .18s ease-out;
+  }
+  .sidebar.open { transform: translateX(0); }
+  .backdrop.show {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .6);
+    z-index: 55;
+  }
 }
 
 @media (min-width: 640px) {

@@ -184,14 +184,13 @@ function showHero() {
   const hero = document.createElement("div");
   hero.className = "empty-hero";
   hero.innerHTML = `
-    <div class="logo-big">V</div>
-    <h2>VPS Assistant</h2>
-    <p>Chat with an agent that runs commands directly on this server.</p>
+    <p class="hero-title">vpsa<span class="cursor"> </span></p>
+    <p class="hero-tag">connected to local vps · shell access enabled · be specific</p>
     <div class="suggestions">
-      <button data-q="Check overall server health: disk, memory, CPU load, failed systemd services">Server health check</button>
-      <button data-q="What are my public-facing services right now? Check listening ports and nginx sites">List exposed services</button>
-      <button data-q="Show recent errors from journalctl across all services">Recent system errors</button>
-      <button data-q="Is anything consuming unusual CPU or memory right now? Show top processes">Top resource hogs</button>
+      <button data-q="Check overall server health: disk, memory, CPU load, failed systemd services">server health check</button>
+      <button data-q="What are my public-facing services right now? Check listening ports and nginx sites">list exposed services</button>
+      <button data-q="Show recent errors from journalctl across all services">recent system errors</button>
+      <button data-q="Is anything consuming unusual CPU or memory right now? Show top processes">top resource hogs</button>
     </div>`;
   hero.querySelectorAll("button[data-q]").forEach((b) =>
     b.addEventListener("click", () => { $("input").value = b.dataset.q; doSend(); }));
@@ -222,7 +221,7 @@ function addToolChip(name, brief) {
   const chip = document.createElement("details");
   chip.className = "tool-chip";
   chip.innerHTML = `
-    <summary><span class="t-ico">⏳</span><span class="t-name">${esc(name)}</span>
+    <summary><span class="t-ico">*</span><span class="t-name">${esc(name)}</span>
       <span class="t-brief">${esc(brief)}</span></summary>
     <pre>(running…)</pre>`;
   chatInner.appendChild(chip);
@@ -326,8 +325,9 @@ async function doSend() {
         } else if (ev.type === "tool_end") {
           const chip = ev._chip;
           if (chip) {
+            chip.classList.add("done");
             chip.classList.toggle("failed", !ev.ok);
-            chip.querySelector(".t-ico").textContent = ev.ok ? "✓" : "✗";
+            chip.querySelector(".t-ico").textContent = ev.ok ? "ok" : "!!";
             const pre = chip.querySelector("pre");
             if (ev.result && ev.result._truncated) {
               pre.textContent = "(large output truncated in UI — full output was given to the model)";
@@ -347,7 +347,7 @@ async function doSend() {
           setStatus(ev.stage === "thinking" ? "thinking…" : "");
         } else if (ev.type === "error") {
           if (!bubble) bubble = addAssistantMsg();
-          bubble.innerHTML = `<span style="color:var(--danger)">⚠ ${esc(ev.message)}</span>`;
+          bubble.innerHTML = `<span class="alert">!! ${esc(ev.message)}</span>`;
           scrollDown();
         } else if (ev.type === "done") {
           if (bubble) {
@@ -363,7 +363,7 @@ async function doSend() {
   } catch (err) {
     if (err.name !== "AbortError") {
       if (!bubble) bubble = addAssistantMsg();
-      bubble.innerHTML = `<span style="color:var(--danger)">⚠ ${esc(err.message)}</span>`;
+      bubble.innerHTML = `<span class="alert">!! ${esc(err.message)}</span>`;
       convo.pop(); // don't keep the user msg if the turn failed hard
       saveHistory();
     } else if (bubble) {

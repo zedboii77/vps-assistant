@@ -17,7 +17,8 @@ No npm, no pip, no build step.
 - 🤖 OpenRouter streaming chat with any model slug
 - 🛠️ Agent tool loop: `shell`, `read_file`, `write_file` — up to 12 tool rounds
   per message, with live tool-call chips in the UI
-- 📱 Mobile-first dark UI (safe-area aware, no iOS zoom-on-focus)
+- 📱 Mobile-first monochrome terminal UI (prompt-line chat, ASCII boot screen;
+  errors stay red)
 - 🎙 Voice dictation via the browser's built-in speech API (mic button; hidden
   where unsupported)
 - ⚡ Live host facts (distro, kernel, mem/disk/CPU, public IP) injected into

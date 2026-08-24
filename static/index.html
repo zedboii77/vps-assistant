@@ -4,20 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
-<title>VPS Assistant</title>
+<title>vpsa — terminal</title>
 <link rel="stylesheet" href="/style.css">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2310b981'/%3E%3Ctext x='16' y='22' font-size='17' font-family='monospace' font-weight='bold' text-anchor='middle' fill='%23052e16'%3EV%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230b0b0b'/%3E%3Ctext x='4' y='23' font-size='18' font-family='monospace' fill='%23e8e8e8'%3E%26gt;_%3C/text%3E%3C/svg%3E">
 </head>
 <body>
 
 <!-- auth -->
 <div id="auth" class="auth-wrap hidden">
   <form id="auth-form" class="auth-card">
-    <div class="logo">V</div>
-    <h1>VPS Assistant</h1>
-    <p id="auth-sub">Sign in to continue</p>
-    <input id="auth-pass" type="password" placeholder="Password" autocomplete="current-password" required minlength="8">
-    <button type="submit" id="auth-btn">Unlock</button>
+    <h1>vps-assistant v1.0</h1>
+    <p id="auth-sub">authentication required — enter password</p>
+    <input id="auth-pass" type="password" placeholder="password" autocomplete="current-password" required minlength="8">
+    <button type="submit" id="auth-btn">[ unlock ]</button>
     <p id="auth-err" class="err"></p>
   </form>
 </div>
@@ -25,11 +24,11 @@
 <!-- app -->
 <div id="app" class="app hidden">
   <header class="topbar">
-    <div class="brand"><span class="dot"></span> VPS Assistant</div>
+    <div class="brand">vpsa</div>
     <div class="top-actions">
-      <span id="model-badge" class="badge" title="OpenRouter model">…</span>
-      <button id="btn-settings" class="icon-btn" aria-label="Settings">⚙</button>
-      <button id="btn-newchat" class="icon-btn" aria-label="New chat">＋</button>
+      <span id="model-badge" class="badge" title="OpenRouter model">model</span>
+      <button id="btn-settings" class="icon-btn">cfg</button>
+      <button id="btn-newchat" class="icon-btn">new</button>
     </div>
   </header>
 
@@ -37,12 +36,13 @@
 
   <footer class="composer-wrap">
     <div class="composer">
-      <textarea id="input" rows="1" placeholder="Ask about your VPS…"
+      <span class="prompt-char">&gt;</span>
+      <textarea id="input" rows="1" placeholder="type a command or question…"
         enterkeyhint="enter"></textarea>
-      <button id="btn-mic" aria-label="Dictate" title="Voice input">🎙</button>
-      <button id="btn-send" aria-label="Send">➤</button>
+      <button id="btn-mic" aria-label="Dictate" title="Voice input">mic</button>
+      <button id="btn-send" aria-label="Send">send</button>
     </div>
-    <p class="hint">Enter = new line · tap ➤ to send · agent can run shell commands (destructive ones need your OK)</p>
+    <p class="hint">enter = newline · send button transmits · agent may execute shell (destructive ops require approval)</p>
   </footer>
 </div>
 

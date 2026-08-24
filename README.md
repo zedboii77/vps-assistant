@@ -25,6 +25,8 @@ No npm, no pip, no build step.
   every system prompt
 - 🧠 Per-message reasoning-effort tuning: `auto` mode classifies each message
   (quick chat → low, debugging/multi-step → high) or pin low/medium/high
+- 👤 `SOUL.md` personality file: small always-on style overlay, hot-editable
+  on the server (no restart needed)
 - 🔒 Destructive-action confirmation policy baked into the system prompt
 
 ## Quick start (SSH terminal)

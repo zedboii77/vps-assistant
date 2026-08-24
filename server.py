@@ -58,6 +58,7 @@ KEY_FILE = os.path.join(DATA_DIR, "openrouter_key")
 SECRET_FILE = os.path.join(DATA_DIR, "session_secret")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 CHATS_DIR = os.path.join(DATA_DIR, "chats")
+SOUL_FILE = os.path.join(SCRIPT_DIR, "SOUL.md")
 os.makedirs(CHATS_DIR, exist_ok=True)
 
 for _p in (AUTH_FILE, KEY_FILE, SECRET_FILE, SETTINGS_FILE):
@@ -193,6 +194,15 @@ def get_reasoning() -> str:
     return lvl if lvl in VALID_EFFORTS else REASONING_EFFORT
 
 
+def get_soul() -> str:
+    """Personality overlay from SOUL.md (capped at 4 KB). Empty if absent."""
+    try:
+        with open(SOUL_FILE) as f:
+            return f.read(4096).strip()
+    except Exception:
+        return ""
+
+
 _login_fails: dict[str, list[float]] = {}
 _lock = threading.Lock()
 
@@ -242,6 +252,8 @@ def system_context() -> str:
 
 SYSTEM_PROMPT = """You are VPS Assistant, a concise Linux sysadmin copilot embedded \
 in a web UI on the VPS you manage. You have direct tool access to the machine.
+
+{soul_block}
 
 Machine facts (live):
 {ctx}
@@ -370,7 +382,10 @@ def run_agent(messages: list, api_key: str, should_cancel=None, effort: str = "m
     """Full tool-loop. Yields UI events; final text arrives as delta events.
     `should_cancel` is polled between steps; when true, yields 'cancelled'."""
     convo = [{"role": "system",
-              "content": SYSTEM_PROMPT.format(ctx=system_context())}]
+              "content": SYSTEM_PROMPT.format(
+                  ctx=system_context(),
+                  soul_block=("Personality & style:\n" + get_soul())
+                  if get_soul() else "")}]
     convo += messages[-MAX_HISTORY:]
     for _step in range(MAX_STEPS):
         if should_cancel and should_cancel():

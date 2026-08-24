@@ -85,44 +85,25 @@ $("auth-form").addEventListener("submit", async (e) => {
 });
 
 /* ---------- key / settings ---------- */
-/* curated lists: verified tool-calling capable */
-const MODEL_LISTS = {
-  openrouter: [
-    { id: "stealth/ox-alpha", label: "★ Ox-Alpha (best quality)" },
-    { id: "nvidia/nemotron-3.5-lightning:free", label: "Nemotron 3.5 Lightning (free · 1M ctx)" },
-    { id: "cohere/north-mini-code:free",        label: "North Mini Code (free · code)" },
-  ],
-  opencode: [
-    { id: "big-pickle", label: "Big Pickle (free)" },
-  ],
-};
-
-function get_provider_label() {
-  const active = document.querySelector("#provider-seg button.active");
-  return active ? active.textContent.trim() : "provider";
-}
-
-/* free-tier models on OpenCode Zen that work without a payment method */
-const ZEN_FREE = ["big-pickle"];
+/* curated OpenRouter models: verified tool-calling capable */
+const MODEL_LISTS = [
+  { id: "stealth/ox-alpha", label: "★ Ox-Alpha (best quality)" },
+  { id: "nvidia/nemotron-3.5-lightning:free", label: "Nemotron 3.5 Lightning (free · 1M ctx)" },
+  { id: "cohere/north-mini-code:free",        label: "North Mini Code (free · code)" },
+];
 
 async function refreshKeyStatus() {
   const k = await fetch("/auth/key").then((r) => r.json());
-  const prov = k.provider || "openrouter";
-  $("model-badge").textContent = `${prov} · ${k.model} · ${k.reasoning || "?"}`;
-  $("key-label").textContent =
-    (k.providers?.[prov]?.label || prov) + " API key";
+  $("model-badge").textContent = `${k.model} · ${k.reasoning || "?"}`;
   $("key-status").textContent = k.configured
     ? k.masked + " configured" : "not configured";
-  document.querySelectorAll("#provider-seg button").forEach((b) =>
-    b.classList.toggle("active", b.dataset.provider === prov));
   document.querySelectorAll("#reasoning-seg button").forEach((b) =>
     b.classList.toggle("active", b.dataset.effort === k.reasoning));
   // rebuild model select
   const sel = $("model-select");
   sel.innerHTML = "";
-  const list = MODEL_LISTS[prov] || [];
-  const haveCurrent = list.some((m) => m.id === k.model);
-  for (const m of list) {
+  const haveCurrent = MODEL_LISTS.some((m) => m.id === k.model);
+  for (const m of MODEL_LISTS) {
     const o = document.createElement("option");
     o.value = m.id;
     o.textContent = m.label;
@@ -134,24 +115,8 @@ async function refreshKeyStatus() {
     sel.appendChild(o);
   }
   sel.value = k.model || "";
-  if (!sel.value && list.length) sel.value = list[0].id;
-  $("model-note").textContent = prov === "opencode"
-    ? "Free without billing: big-pickle. Paid Zen models need a payment method at opencode.ai."
-    : "Free tier: shared capacity, occasional rate limits. Paid models are one paste away.";
-  $("provider-note").textContent = prov === "opencode"
-    ? "Curated gateway at opencode.ai — same console account."
-    : "Any model on openrouter.ai — same account/key.";
+  if (!sel.value && MODEL_LISTS.length) sel.value = MODEL_LISTS[0].id;
 }
-
-document.querySelectorAll("#provider-seg button").forEach((b) =>
-  b.addEventListener("click", async () => {
-    const r = await fetch("/settings/provider", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ provider: b.dataset.provider }),
-    });
-    if (r.ok) refreshKeyStatus();
-  }));
 
 let modelSaveTimer = null;
 $("model-select").addEventListener("change", async () => {
@@ -278,7 +243,7 @@ $("key-check").addEventListener("click", async () => {
   const v = $("key-input").value.trim();
   const note = $("key-verify");
   if (v.length < 20) { note.textContent = "!! that does not look like an API key"; return; }
-  note.textContent = "checking with " + (get_provider_label()) + "…";
+  note.textContent = "checking with OpenRouter…";
   const d = await validateKey(v);
   note.textContent = d.ok
     ? `valid — ${d.label}, used $${d.usage}${d.limit ? " of $" + d.limit : ""}`

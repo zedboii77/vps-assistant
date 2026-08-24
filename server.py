@@ -54,13 +54,6 @@ PROVIDERS = {
         "supports_reasoning": True,
         "key_env": "OPENROUTER_API_KEY",
     },
-    "opencode": {
-        "label": "OpenCode Zen",
-        "url": "https://opencode.ai/zen/v1/chat/completions",
-        "default_model": "big-pickle",
-        "supports_reasoning": False,
-        "key_env": "OPENCODE_API_KEY",
-    },
 }
 
 MAX_STEPS = 12                 # agent tool-loop iterations per user turn
@@ -221,8 +214,8 @@ def load_settings() -> dict:
 
 
 def get_provider() -> str:
-    p = load_settings().get("provider")
-    return p if p in PROVIDERS else "openrouter"
+    """Only OpenRouter exists now; any legacy 'opencode' setting falls back."""
+    return "openrouter"
 
 
 def get_model() -> str:
@@ -801,11 +794,6 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/settings/provider":
             body = self._body()
             s = load_settings()
-            if "provider" in body:
-                p = str(body["provider"]).strip().lower()
-                if p not in PROVIDERS:
-                    return self._send(400, {"error": f"provider must be one of: {', '.join(PROVIDERS)}"})
-                s["provider"] = p
             if "model" in body:
                 s["model"] = str(body["model"]).strip()[:120]
             save_settings(s)
@@ -813,35 +801,8 @@ class Handler(BaseHTTPRequestHandler):
                                     "model": get_model()})
         if path == "/auth/validate-key":
             k = str(self._body().get("api_key", "")).strip()
-            prov = get_provider()
             if len(k) < 20:
                 return self._send(200, {"ok": False, "error": "that does not look like an API key"})
-            if prov == "opencode":
-                req = urllib.request.Request(
-                    "https://opencode.ai/zen/v1/models",
-                    headers={"Authorization": f"Bearer {k}"})
-                try:
-                    with urllib.request.urlopen(req, timeout=20) as r:
-                        r.read()
-                    return self._send(200, {"ok": True, "label": "OpenCode Zen key valid"})
-                except urllib.error.HTTPError as e:
-                    body = ""
-                    try:
-                        err = json.loads(e.read().decode(errors="replace"))
-                        body = err.get("error", {}).get("message", "")
-                    except Exception:
-                        pass
-                    if "CreditsError" in body or "payment" in body.lower():
-                        msg = "key valid but no payment method on opencode.ai — only free models (big-pickle) will work"
-                    elif "ModelError" in body or "not supported" in body:
-                        msg = "model not available for this key"
-                    elif e.code in (401, 403):
-                        msg = "invalid or revoked key"
-                    else:
-                        msg = f"OpenCode HTTP {e.code}"
-                    return self._send(200, {"ok": False, "error": msg})
-                except Exception as e:
-                    return self._send(200, {"ok": False, "error": f"network error: {e}"})
             req = urllib.request.Request(
                 "https://openrouter.ai/api/v1/auth/key",
                 headers={"Authorization": f"Bearer {k}"})

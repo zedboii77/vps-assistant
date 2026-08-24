@@ -74,6 +74,7 @@ python3 server.py           # http://127.0.0.1:8095
 | `VPSA_HOST`          | `127.0.0.1`        | Bind address (keep loopback!)  |
 | `VPSA_DATA_DIR`      | `<repo>/data`      | Auth + key storage             |
 | `VPSA_MODEL`         | `stealth/ox-alpha` | Any OpenRouter model slug      |
+| `VPSA_REASONING`     | `high`             | Reasoning effort (low/medium/high) |
 | `OPENROUTER_API_KEY` | —                  | Overrides the Settings-UI key  |
 
 ## Production deploy (systemd + nginx)

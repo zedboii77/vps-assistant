@@ -88,7 +88,7 @@ $("auth-form").addEventListener("submit", async (e) => {
 /* curated lists: verified tool-calling capable */
 const MODEL_LISTS = {
   openrouter: [
-    { id: "stealth/ox-alpha", label: "★ Ox-Alpha (best quality, paid)" },
+    { id: "stealth/ox-alpha", label: "★ Ox-Alpha (best quality)" },
     { id: "nvidia/nemotron-3.5-lightning:free", label: "Nemotron 3.5 Lightning (free · 1M ctx)" },
     { id: "cohere/north-mini-code:free",        label: "North Mini Code (free · code)" },
   ],

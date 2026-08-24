@@ -147,6 +147,7 @@ function toggleSidebar(force) {
 }
 $("btn-menu").addEventListener("click", () => toggleSidebar());
 $("backdrop").addEventListener("click", () => toggleSidebar(false));
+$("btn-newchat").addEventListener("click", () => { newChat(); });
 
 async function newChat() {
   const d = await fetch("/chats", { method: "POST" }).then((r) => r.json());

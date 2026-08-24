@@ -297,6 +297,30 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   flex-shrink: 0;
 }
 #btn-send:disabled { opacity: .45; cursor: default; }
+
+#btn-mic {
+  width: 44px; height: 44px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 17px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+#btn-mic:hover { border-color: var(--accent); }
+#btn-mic.recording {
+  background: #7f1d1d;
+  border-color: #b91c1c;
+  color: #fecaca;
+  animation: micpulse 1.3s ease-in-out infinite;
+}
+@keyframes micpulse {
+  50% { box-shadow: 0 0 0 7px rgba(239, 68, 68, .16); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #btn-mic.recording { animation: none; }
+}
 .hint {
   text-align: center;
   color: var(--dim);

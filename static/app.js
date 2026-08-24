@@ -341,6 +341,61 @@ $("input").addEventListener("input", autoGrow);
 // NOTE: sending is intentionally button-only. Enter inserts a newline.
 $("btn-send").addEventListener("click", doSend);
 
+/* ---------- mic dictation (Web Speech API, button-only UX) ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!SR) {
+  $("btn-mic").classList.add("hidden");   // unsupported browser: hide entirely
+} else {
+  let recog = null;
+  let recording = false;
+  const micBtn = $("btn-mic");
+
+  micBtn.addEventListener("click", () => {
+    if (recording) { recog.stop(); return; }
+    recog = new SR();
+    recog.lang = navigator.language || "en-US";
+    recog.interimResults = true;
+    recog.continuous = true;
+    const base = $("input").value;
+
+    recog.onstart = () => {
+      recording = true;
+      micBtn.classList.add("recording");
+      micBtn.textContent = "⏹";
+      micBtn.title = "Stop dictation";
+      setStatus("listening… speak, then tap ⏹");
+    };
+    recog.onresult = (e) => {
+      let finalTxt = "";
+      let interim = "";
+      for (let i = 0; i < e.results.length; i++) {
+        if (e.results[i].isFinal) finalTxt += e.results[i][0].transcript;
+        else interim += e.results[i][0].transcript;
+      }
+      $("input").value = (base ? base + " " : "") + finalTxt + interim;
+      autoGrow();
+    };
+    const stop = () => {
+      if (!recording) return;
+      recording = false;
+      micBtn.classList.remove("recording");
+      micBtn.textContent = "🎙";
+      micBtn.title = "Voice input";
+      setStatus("");
+    };
+    recog.onend = stop;
+    recog.onerror = (e) => {
+      stop();
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        setStatus("mic blocked — allow microphone access for this site");
+      } else if (e.error !== "aborted") {
+        setStatus("voice input error: " + e.error);
+      }
+    };
+    try { recog.start(); } catch { /* double-start race; ignore */ }
+  });
+}
+
 $("btn-newchat").addEventListener("click", () => {
   convo = [];
   showHero();

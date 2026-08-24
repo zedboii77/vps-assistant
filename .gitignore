@@ -1,0 +1,6 @@
+data/
+.env
+__pycache__/
+*.pyc
+test_api.py
+nohup.out

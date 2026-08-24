@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>VPS Assistant</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2310b981'/%3E%3Ctext x='16' y='22' font-size='17' font-family='monospace' font-weight='bold' text-anchor='middle' fill='%23052e16'%3EV%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+
+<!-- auth -->
+<div id="auth" class="auth-wrap hidden">
+  <form id="auth-form" class="auth-card">
+    <div class="logo">V</div>
+    <h1>VPS Assistant</h1>
+    <p id="auth-sub">Sign in to continue</p>
+    <input id="auth-pass" type="password" placeholder="Password" autocomplete="current-password" required minlength="8">
+    <button type="submit" id="auth-btn">Unlock</button>
+    <p id="auth-err" class="err"></p>
+  </form>
+</div>
+
+<!-- app -->
+<div id="app" class="app hidden">
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span> VPS Assistant</div>
+    <div class="top-actions">
+      <span id="model-badge" class="badge" title="OpenRouter model">…</span>
+      <button id="btn-settings" class="icon-btn" aria-label="Settings">⚙</button>
+      <button id="btn-newchat" class="icon-btn" aria-label="New chat">＋</button>
+    </div>
+  </header>
+
+  <main id="chat" class="chat"></main>
+
+  <footer class="composer-wrap">
+    <div class="composer">
+      <textarea id="input" rows="1" placeholder="Ask about your VPS…"
+        enterkeyhint="send"></textarea>
+      <button id="btn-send" aria-label="Send">➤</button>
+    </div>
+    <p class="hint">Model can run shell commands on this server · destructive actions need your OK</p>
+  </footer>
+</div>
+
+<!-- settings modal -->
+<div id="settings" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-head"><h2>Settings</h2><button id="settings-close" class="icon-btn">✕</button></div>
+    <label class="fld-label">OpenRouter API key</label>
+    <div class="key-row">
+      <code id="key-status" class="key-status">…</code>
+      <button id="key-toggle" class="mini-btn">Change</button>
+    </div>
+    <input id="key-input" type="password" placeholder="sk-or-v1-…" class="hidden">
+    <button id="key-save" class="hidden mini-btn primary">Save key</button>
+    <label class="fld-label">Model</label>
+    <code id="model-name" class="key-status">…</code>
+    <hr>
+    <button id="btn-logout" class="mini-btn danger">Log out</button>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,558 @@
+#!/usr/bin/env python3
+"""
+VPS Assistant — a small dedicated chat agent web UI for VPS management,
+powered by any OpenRouter chat model (default: stealth/ox-alpha).
+
+Pure Python stdlib. Run:  python3 server.py
+
+Environment:
+  VPSA_PORT          HTTP port              (default 8095)
+  VPSA_HOST          bind address           (default 127.0.0.1)
+  VPSA_DATA_DIR      state directory        (default <script_dir>/data)
+  VPSA_MODEL         OpenRouter model slug  (default stealth/ox-alpha)
+  OPENROUTER_API_KEY optional pre-set key   (otherwise entered in Settings UI)
+"""
+
+import base64
+import hashlib
+import hmac
+import json
+import os
+import re
+import secrets
+import shutil
+import socket
+import sqlite3
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PORT = int(os.environ.get("VPSA_PORT", "8095"))
+HOST = os.environ.get("VPSA_HOST", "127.0.0.1")
+DATA_DIR = os.environ.get("VPSA_DATA_DIR", os.path.join(SCRIPT_DIR, "data"))
+MODEL = os.environ.get("VPSA_MODEL", "stealth/ox-alpha")
+OR_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+MAX_STEPS = 12                 # agent tool-loop iterations per user turn
+MAX_TOOL_OUTPUT = 8000         # chars of tool output fed back to the model
+MAX_HISTORY = 60               # messages sent to the model per request
+COOKIE_NAME = "vpsa_sess"
+SESSION_TTL = 14 * 24 * 3600   # seconds
+
+os.makedirs(DATA_DIR, exist_ok=True)
+AUTH_FILE = os.path.join(DATA_DIR, "auth.json")
+KEY_FILE = os.path.join(DATA_DIR, "openrouter_key")
+SECRET_FILE = os.path.join(DATA_DIR, "session_secret")
+
+for _p in (AUTH_FILE, KEY_FILE, SECRET_FILE):
+    if not os.path.exists(_p):
+        with open(_p, "w") as f:
+            pass
+    os.chmod(_p, 0o600)
+
+
+def _session_secret() -> bytes:
+    with open(SECRET_FILE, "r+") as f:
+        s = f.read().strip()
+        if not s:
+            s = secrets.token_hex(32)
+            f.write(s)
+    return s.encode()
+
+
+SESSION_SECRET = _session_secret()
+
+# ---------------------------------------------------------------- helpers
+
+def hash_password(password: str, salt: str) -> str:
+    return hashlib.sha256((salt + password).encode()).hexdigest()
+
+
+def load_auth() -> dict | None:
+    try:
+        with open(AUTH_FILE) as f:
+            d = json.load(f)
+        return d if d.get("hash") else None
+    except Exception:
+        return None
+
+
+def save_auth(password: str) -> None:
+    salt = secrets.token_hex(16)
+    with open(AUTH_FILE, "w") as f:
+        json.dump({"salt": salt, "hash": hash_password(password, salt)}, f)
+
+
+def make_token() -> str:
+    exp = str(int(time.time()) + SESSION_TTL)
+    sig = hmac.new(SESSION_SECRET, exp.encode(), hashlib.sha256).hexdigest()
+    return f"{exp}.{sig}"
+
+
+def check_token(token: str | None) -> bool:
+    if not token or "." not in token:
+        return False
+    exp, sig = token.split(".", 1)
+    want = hmac.new(SESSION_SECRET, exp.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, want):
+        return False
+    return int(exp) > time.time()
+
+
+def get_api_key() -> str | None:
+    env = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if env:
+        return env
+    try:
+        with open(KEY_FILE) as f:
+            k = f.read().strip()
+            return k or None
+    except Exception:
+        return None
+
+
+def mask_key(k: str) -> str:
+    return f"{k[:11]}...{k[-4:]}" if len(k) > 20 else "***"
+
+
+_login_fails: dict[str, list[float]] = {}
+_lock = threading.Lock()
+
+
+def login_allowed(ip: str) -> bool:
+    now = time.time()
+    with _lock:
+        tries = [t for t in _login_fails.get(ip, []) if now - t < 600]
+        _login_fails[ip] = tries
+        return len(tries) < 10
+
+
+def record_fail(ip: str) -> None:
+    with _lock:
+        _login_fails.setdefault(ip, []).append(time.time())
+
+
+def system_context() -> str:
+    """Live host facts injected into the system prompt each turn."""
+
+    def run(cmd, timeout=6):
+        try:
+            return subprocess.run(cmd, shell=True, capture_output=True,
+                                  text=True, timeout=timeout).stdout.strip()
+        except Exception as e:
+            return f"(unavailable: {e})"
+
+    host = socket.gethostname()
+    kernel = run("uname -r")
+    uptime = run("uptime -p")
+    distro = run(". /etc/os-release && echo $PRETTY_NAME")
+    cpu = run("nproc")
+    mem = run("free -m | awk '/^Mem:/{print $3\"/\"$2\" MB used\"}'")
+    disk = run("df -h / | awk 'NR==2{print $3\"/\"$2\" used (\"$5\")\"}'")
+    loadavg = run("cat /proc/loadavg | cut -d' ' -f1-3")
+    try:
+        ip = json.load(urllib.request.urlopen(
+            "https://api.ipify.org?format=json", timeout=4))["ip"]
+    except Exception:
+        ip = "(unknown)"
+    return (
+        f"Host: {host}\nDistro: {distro}\nKernel: {kernel}\n"
+        f"CPU cores: {cpu}\nMemory: {mem}\nDisk /: {disk}\n"
+        f"Load: {loadavg}\nUptime: {uptime}\nPublic IP: {ip}"
+    )
+
+
+SYSTEM_PROMPT = """You are VPS Assistant, a concise Linux sysadmin copilot embedded \
+in a web UI on the VPS you manage. You have direct tool access to the machine.
+
+Machine facts (live):
+{ctx}
+
+Rules:
+- Use the `shell` tool for anything about running services, logs, network, files, \
+packages, cron, etc. Do not guess when you can check.
+- Prefer systemctl / journalctl / ss / df / free. Keep commands targeted; avoid \
+needlessly heavy ones (no unbounded recursive greps of huge trees).
+- DESTRUCTIVE actions (rm -rf outside /tmp, dropping databases, firewall flushes, \
+service disables, package removals, editing configs) require explicit user \
+confirmation first: say what you plan to run and wait for approval.
+- read_file/write_file are for inspecting and patching config/text files. \
+write_file overwrites whole files — prefer small, precise writes.
+- Answer in the user's language. Be brief and factual; show the key command output, \
+not everything. When a fix needs several steps, do them yourself with tools instead \
+of telling the user to run them — that is your job here.
+- Assume the user is NOT a Linux expert. Explain findings in plain language: what \
+the numbers mean, whether it looks healthy, and what you recommend next. Avoid \
+jargon where possible; when a command matters, say in one short line what it does.
+- If a tool errors, adapt rather than repeating it unchanged."""
+
+TOOLS_SCHEMA = [
+    {"type": "function", "function": {
+        "name": "shell",
+        "description": "Run a bash command on the VPS and return stdout/stderr "
+                       "and exit code. Working directory: /root.",
+        "parameters": {"type": "object", "properties": {
+            "cmd": {"type": "string"},
+            "timeout": {"type": "integer",
+                        "description": "seconds, default 30, max 180"}},
+            "required": ["cmd"]}}},
+    {"type": "function", "function": {
+        "name": "read_file",
+        "description": "Read a text file (up to ~200 KB).",
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string"}},
+            "required": ["path"]}}},
+    {"type": "function", "function": {
+        "name": "write_file",
+        "description": "Create/overwrite a text file (parents auto-created). "
+                       "Full overwrite — include the complete desired content.",
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string"}, "content": {"type": "string"}},
+            "required": ["path", "content"]}}},
+]
+
+
+def execute_tool(name: str, args: dict) -> dict:
+    if name == "shell":
+        cmd = str(args.get("cmd", ""))[:20000]
+        try:
+            tmo = min(max(int(args.get("timeout", 30)), 1), 180)
+        except Exception:
+            tmo = 30
+        try:
+            p = subprocess.run(cmd, shell=True, executable="/bin/bash",
+                               capture_output=True, text=True, timeout=tmo,
+                               cwd="/root")
+            out = {"ok": p.returncode == 0, "exit_code": p.returncode,
+                   "stdout": p.stdout[:MAX_TOOL_OUTPUT],
+                   "stderr": p.stderr[:MAX_TOOL_OUTPUT // 2]}
+            if len(p.stdout) > MAX_TOOL_OUTPUT:
+                out["stdout_truncated"] = True
+            return out
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": f"timeout after {tmo}s"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    if name == "read_file":
+        path = str(args.get("path", ""))
+        try:
+            with open(path, "r", errors="replace") as f:
+                data = f.read(200_000)
+            truncated = len(data) == 200_000
+            return {"ok": True, "path": path,
+                    "content": data, "truncated": truncated}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    if name == "write_file":
+        path = str(args.get("path", ""))
+        content = str(args.get("content", ""))
+        if not path or path.endswith("/"):
+            return {"ok": False, "error": "invalid path"}
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            if os.path.isdir(path):
+                return {"ok": False, "error": "path is a directory"}
+            tmp = path + ".vpsa.tmp"
+            with open(tmp, "w") as f:
+                f.write(content)
+            shutil.move(tmp, path)
+            return {"ok": True, "bytes_written": len(content.encode())}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    return {"ok": False, "error": f"unknown tool {name}"}
+
+
+def call_openrouter_stream(convo: list, api_key: str):
+    """Yield parsed chunks from a streaming completion. Raises on HTTP errors."""
+    payload = {"model": MODEL, "messages": convo, "stream": True,
+               "max_tokens": 16384, "tools": TOOLS_SCHEMA}
+    req = urllib.request.Request(
+        OR_API_URL, data=json.dumps(payload).encode(),
+        headers={"Authorization": f"Bearer {api_key}",
+                 "Content-Type": "application/json"})
+    resp = urllib.request.urlopen(req, timeout=600)
+    for raw in resp:
+        line = raw.decode("utf-8", "replace").strip()
+        if not line.startswith("data:"):
+            continue  # skip ": OPENROUTER PROCESSING" keep-alives etc.
+        data = line[5:].strip()
+        if data == "[DONE]":
+            break
+        try:
+            chunk = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        if "error" in chunk:
+            raise RuntimeError(chunk["error"].get("message", "stream error"))
+        yield chunk
+
+
+def run_agent(messages: list, api_key: str):
+    """Full tool-loop. Yields UI events; final text arrives as delta events."""
+    convo = [{"role": "system",
+              "content": SYSTEM_PROMPT.format(ctx=system_context())}]
+    convo += messages[-MAX_HISTORY:]
+    for _step in range(MAX_STEPS):
+        yield {"type": "status", "stage": "thinking"}
+        parts, calls, finish = [], {}, None
+        try:
+            for chunk in call_openrouter_stream(convo, api_key):
+                chs = chunk.get("choices") or []
+                if not chs:
+                    continue
+                d = chs[0].get("delta") or {}
+                if d.get("content"):
+                    parts.append(d["content"])
+                    yield {"type": "delta", "text": d["content"]}
+                for tc in d.get("tool_calls") or []:
+                    i = tc.get("index", 0)
+                    slot = calls.setdefault(i, {"id": "", "name": "", "args": ""})
+                    if tc.get("id"):
+                        slot["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        slot["name"] += fn["name"]
+                    if fn.get("arguments"):
+                        slot["args"] += fn["arguments"]
+                if chs[0].get("finish_reason"):
+                    finish = chs[0]["finish_reason"]
+        except urllib.error.HTTPError as e:
+            detail = e.read()[:400].decode(errors="replace")
+            yield {"type": "error",
+                   "message": f"OpenRouter HTTP {e.code}: {detail}"}
+            return
+        except Exception as e:
+            yield {"type": "error", "message": f"request failed: {e}"}
+            return
+
+        msg = {"role": "assistant", "content": "".join(parts) or None}
+        if calls:
+            msg["tool_calls"] = [
+                {"id": s["id"] or f"call_{i}", "type": "function",
+                 "function": {"name": s["name"],
+                              "arguments": s["args"] or "{}"}}
+                for i, s in sorted(calls.items())]
+        convo.append(msg)
+
+        if not calls:
+            if finish == "length":
+                yield {"type": "error",
+                       "message": "Model hit the token limit mid-answer."}
+            return
+
+        for i, s in sorted(calls.items()):
+            name = s["name"]
+            try:
+                args = json.loads(s["args"] or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            cid = s["id"] or f"call_{i}"
+            brief_in = args.get("cmd") or args.get("path") or ""
+            yield {"type": "tool_start", "name": name, "brief": str(brief_in)[:120]}
+            result = execute_tool(name, args)
+            out_json = json.dumps(result)
+            yield {"type": "tool_end", "name": name,
+                   "ok": bool(result.get("ok")),
+                   "result": result if len(out_json) < 4000 else
+                             {"ok": result.get("ok"), "_truncated": True}}
+            convo.append({"role": "tool", "tool_call_id": cid,
+                          "content": out_json[:24000]})
+    yield {"type": "error",
+           "message": f"Gave up after {MAX_STEPS} tool rounds without a final answer."}
+
+
+# ---------------------------------------------------------------- HTTP
+
+STATIC_DIR = os.path.join(SCRIPT_DIR, "static")
+MIME = {".html": "text/html", ".js": "text/javascript",
+        ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png"}
+
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, fmt, *args):
+        print(f"[{time.strftime('%H:%M:%S')}] {self.address_string()} {fmt % args}",
+              flush=True)
+
+    # -- plumbing ---------------------------------------------------------
+    def _body(self) -> dict:
+        n = int(self.headers.get("Content-Length") or 0)
+        if n <= 0 or n > 1_000_000:
+            return {}
+        try:
+            return json.loads(self.rfile.read(n))
+        except json.JSONDecodeError:
+            return {}
+
+    def _send(self, code: int, obj=None, ctype="application/json",
+              raw: bytes | None = None, extra_headers=()):
+        body = raw if raw is not None else json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        for k, v in extra_headers:
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _redirect(self, loc: str):
+        self.send_response(303)
+        self.send_header("Location", loc)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _cookie_token(self) -> str | None:
+        for part in (self.headers.get("Cookie") or "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == COOKIE_NAME:
+                return v
+        return None
+
+    def _authed(self) -> bool:
+        return check_token(self._cookie_token())
+
+    def _client_ip(self) -> str:
+        fwd = self.headers.get("X-Forwarded-For")
+        return (fwd.split(",")[0].strip() if fwd else self.client_address[0])
+
+    # -- routes -----------------------------------------------------------
+    def do_GET(self):
+        path = self.path.split("?", 1)[0]
+        if path == "/health":
+            return self._send(200, {"ok": True})
+        if path == "/auth/state":
+            mode = "setup" if load_auth() is None else "login"
+            return self._send(200, {"mode": mode,
+                                    "authenticated": self._authed()})
+        if path == "/auth/key":
+            if not self._authed():
+                return self._send(401, {"error": "not authenticated"})
+            k = get_api_key()
+            return self._send(200, {"configured": bool(k),
+                                    "masked": mask_key(k) if k else None,
+                                    "model": MODEL})
+        if path == "/chat":
+            return self._send(405, {"error": "POST only"})
+        # static files
+        if path == "/":
+            path = "/index.html"
+        fname = os.path.normpath(path).lstrip("/")
+        full = os.path.join(STATIC_DIR, fname)
+        if not full.startswith(STATIC_DIR) or not os.path.isfile(full):
+            return self._send(404, {"error": "not found"})
+        ext = os.path.splitext(full)[1]
+        with open(full, "rb") as f:
+            self._send(200, raw=f.read(),
+                       ctype=MIME.get(ext, "application/octet-stream"),
+                       extra_headers=[("Cache-Control", "no-cache")])
+
+    def do_POST(self):
+        path = self.path.split("?", 1)[0]
+        ip = self._client_ip()
+        if path == "/auth/setup":
+            if load_auth() is not None:
+                return self._send(409, {"error": "already set up"})
+            pw = str(self._body().get("password", ""))
+            if len(pw) < 8:
+                return self._send(400, {"error": "password too short (min 8)"})
+            save_auth(pw)
+            return self._set_session()
+        if path == "/auth/login":
+            auth = load_auth()
+            if auth is None:
+                return self._send(409, {"error": "setup required"})
+            if not login_allowed(ip):
+                return self._send(429, {"error": "too many attempts, wait 10 min"})
+            if hmac.compare_digest(hash_password(str(self._body().get("password", "")),
+                                                 auth["salt"]), auth["hash"]):
+                return self._set_session()
+            record_fail(ip)
+            time.sleep(1)
+            return self._send(401, {"error": "wrong password"})
+        if path == "/auth/logout":
+            return self._send(200, {"ok": True}, extra_headers=[
+                ("Set-Cookie", f"{COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax")])
+        if path == "/auth/key":
+            if not self._authed():
+                return self._send(401, {"error": "not authenticated"})
+            k = str(self._body().get("api_key", "")).strip()
+            if not k.startswith("sk-or-"):
+                return self._send(400, {"error": "that does not look like an OpenRouter key"})
+            with open(KEY_FILE, "w") as f:
+                f.write(k)
+            os.chmod(KEY_FILE, 0o600)
+            return self._send(200, {"ok": True, "masked": mask_key(k)})
+        if path == "/chat":
+            return self.route_chat(ip)
+        return self._send(404, {"error": "not found"})
+
+    def _set_session(self):
+        secure = ", Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+        return self._send(200, {"ok": True}, extra_headers=[
+            ("Set-Cookie",
+             f"{COOKIE_NAME}={make_token()}; Max-Age={SESSION_TTL}; Path=/; HttpOnly; SameSite=Lax{secure}")])
+
+    # -- SSE chat ----------------------------------------------------------
+    def route_chat(self, ip):
+        if not self._authed():
+            return self._send(401, {"error": "not authenticated"})
+        body = self._body()
+        msgs = body.get("messages")
+        if not isinstance(msgs, list) or not msgs:
+            return self._send(400, {"error": "messages required"})
+        clean = []
+        for m in msgs[-MAX_HISTORY:]:
+            if isinstance(m, dict) and m.get("role") in ("user", "assistant"):
+                txt = str(m.get("content") or "")
+                if txt:
+                    clean.append({"role": m["role"], "content": txt[-32000:]})
+        if not clean:
+            return self._send(400, {"error": "empty conversation"})
+        api_key = get_api_key()
+        if not api_key:
+            return self._send(400, {"error": "no OpenRouter key configured — open Settings"})
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+        def emit(ev: dict):
+            self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
+            self.wfile.flush()
+
+        try:
+            for ev in run_agent(clean, api_key):
+                emit(ev)
+            emit({"type": "done"})
+        except (BrokenPipeError, ConnectionResetError):
+            print(f"[chat] client {ip} disconnected mid-stream", flush=True)
+        except Exception as e:
+            try:
+                emit({"type": "error", "message": str(e)})
+                emit({"type": "done"})
+            except Exception:
+                pass
+
+
+def main():
+    srv = ThreadingHTTPServer((HOST, PORT), Handler)
+    srv.daemon_threads = True
+    print(f"vps-assistant listening on http://{HOST}:{PORT} "
+          f"(model: {MODEL}, data: {DATA_DIR})", flush=True)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,19 @@
+[Unit]
+Description=VPS Assistant (chat agent web UI, port 8095)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/vps-assistant
+Environment=VPSA_PORT=8095
+Environment=VPSA_HOST=127.0.0.1
+# Optional: uncomment to pre-set the key instead of using the Settings UI.
+# EnvironmentFile=/opt/vps-assistant/.env
+ExecStart=/usr/bin/python3 /opt/vps-assistant/server.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

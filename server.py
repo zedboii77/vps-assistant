@@ -43,6 +43,7 @@ PORT = int(os.environ.get("VPSA_PORT", "8095"))
 HOST = os.environ.get("VPSA_HOST", "127.0.0.1")
 DATA_DIR = os.environ.get("VPSA_DATA_DIR", os.path.join(SCRIPT_DIR, "data"))
 MODEL = os.environ.get("VPSA_MODEL", "stealth/ox-alpha")
+REASONING_EFFORT = os.environ.get("VPSA_REASONING", "high")
 OR_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 MAX_STEPS = 12                 # agent tool-loop iterations per user turn
@@ -279,7 +280,8 @@ def execute_tool(name: str, args: dict) -> dict:
 def call_openrouter_stream(convo: list, api_key: str):
     """Yield parsed chunks from a streaming completion. Raises on HTTP errors."""
     payload = {"model": MODEL, "messages": convo, "stream": True,
-               "max_tokens": 16384, "tools": TOOLS_SCHEMA}
+               "max_tokens": 16384, "tools": TOOLS_SCHEMA,
+               "reasoning": {"effort": REASONING_EFFORT}}
     req = urllib.request.Request(
         OR_API_URL, data=json.dumps(payload).encode(),
         headers={"Authorization": f"Bearer {api_key}",

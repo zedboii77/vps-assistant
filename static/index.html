@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>vpsa — terminal</title>
-<link rel="stylesheet" href="/style.css?v=8">
+<link rel="stylesheet" href="/style.css?v=9">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230b0b0b'/%3E%3Ctext x='4' y='23' font-size='18' font-family='monospace' fill='%23e8e8e8'%3E%26gt;_%3C/text%3E%3C/svg%3E">
 </head>
 <body>
@@ -31,6 +31,7 @@
     </div>
     <nav id="chat-list" class="chat-list"></nav>
     <div class="side-foot">
+      <button id="btn-term" class="side-btn">$ — terminal</button>
       <button id="btn-settings" class="side-btn">cfg — settings</button>
       <button id="btn-logout" class="side-btn">exit — log out</button>
     </div>
@@ -87,6 +88,21 @@
   </div>
 </div>
 
-<script src="/app.js?v=8"></script>
+<!-- terminal drawer -->
+<div id="term-drawer" class="modal hidden">
+  <div class="modal-card term-card">
+    <div class="modal-head"><h2>terminal — quick commands (120s cap)</h2><button id="term-close" class="mini-btn">esc</button></div>
+    <pre id="term-out" class="term-out">$ ready — type a command below</pre>
+    <div class="composer term-in">
+      <span class="prompt-char">$</span>
+      <input id="term-cmd" type="text" placeholder="e.g. df -h · journalctl -u nginx -n 20 · ss -tlnp"
+        autocomplete="off" spellcheck="false">
+      <button id="term-run">run</button>
+    </div>
+    <p class="hint">runs as the service user in /root · output capped at ~20 KB · Enter runs</p>
+  </div>
+</div>
+
+<script src="/app.js?v=9"></script>
 </body>
 </html>

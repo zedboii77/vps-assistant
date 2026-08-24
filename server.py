@@ -736,6 +736,21 @@ class Handler(BaseHTTPRequestHandler):
             s["reasoning_effort"] = lvl
             save_settings(s)
             return self._send(200, {"ok": True, "reasoning": lvl})
+        if path == "/term":
+            cmd = str(self._body().get("cmd", "")).strip()[:20000]
+            if not cmd:
+                return self._send(400, {"error": "cmd required"})
+            try:
+                p = subprocess.run(cmd, shell=True, executable="/bin/bash",
+                                   capture_output=True, text=True,
+                                   timeout=120, cwd="/root")
+                return self._send(200, {
+                    "ok": p.returncode == 0, "exit_code": p.returncode,
+                    "stdout": p.stdout[:20000], "stderr": p.stderr[:8000]})
+            except subprocess.TimeoutExpired:
+                return self._send(200, {"ok": False, "error": "timeout after 120s"})
+            except Exception as e:
+                return self._send(200, {"ok": False, "error": str(e)})
         if path == "/chats":
             chat = new_chat()
             return self._send(200, {"id": chat["id"]})

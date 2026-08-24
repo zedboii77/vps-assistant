@@ -207,6 +207,33 @@ code, pre {
 }
 .side-btn:hover { color: var(--fg); background: var(--panel2); }
 .backdrop { display: none; }
+
+/* ---------- terminal drawer ---------- */
+.term-card { max-width: 720px; width: 96%; display: flex; flex-direction: column; }
+.term-out {
+  margin: 12px 0 10px;
+  background: #0a0a0a;
+  border: 1px solid var(--border);
+  min-height: 200px;
+  max-height: 46vh;
+  overflow: auto;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--fg);
+}
+.term-in { border-color: var(--border-bright); }
+.term-in input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 14px;
+  padding: 11px 8px;
+}
+.term-in input:focus { outline: none; }
 .topbar {
   display: flex;
   align-items: center;
@@ -443,7 +470,6 @@ code, pre {
   color: var(--fg);
   font-size: 16px;   /* prevents iOS zoom */
   font-family: inherit;
-  max-height: 160px;
   line-height: 1.45;
   padding: 11px 10px;
 }
@@ -595,6 +621,77 @@ hr {
 }
 
 #btn-menu { display: none; }
+
+/* terminal tab (sidebar) */
+.term-tab-btn {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 8px;
+  padding: 7px 10px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--dim);
+  font-family: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.term-tab-btn::before { content: ">_ "; color: var(--faint); }
+.term-tab-btn:hover { color: var(--fg); border-color: var(--border-bright); }
+.terminal-pane {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  background: rgba(0, 0, 0, .92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+}
+.terminal-box {
+  display: flex;
+  flex-direction: column;
+  width: min(960px, 100%);
+  height: min(640px, 100%);
+  background: var(--bg);
+  border: 1px solid var(--border-bright);
+}
+.term-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--dim);
+  font-size: 12px;
+}
+#term-out {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+#term-out .t-cmd { color: var(--blue); font-weight: 700; }
+#term-out .t-err { color: var(--red); }
+.term-inrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  padding: 8px 12px;
+}
+.term-inrow .prompt-char { padding: 0; }
+#term-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 14px;
+}
 
 @media (max-width: 900px) {
   #btn-menu { display: inline-block; }

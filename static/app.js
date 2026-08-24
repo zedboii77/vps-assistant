@@ -116,6 +116,71 @@ $("btn-logout").addEventListener("click", async () => {
   await fetch("/auth/logout", { method: "POST" });
   location.reload();
 });
+
+/* ---------- terminal drawer (quick commands) ---------- */
+const termHist = [];
+let termHistIdx = -1;
+let termBusy = false;
+
+function termAppend(text) {
+  const out = $("term-out");
+  out.textContent += "\n" + text;
+  out.scrollTop = out.scrollHeight;
+}
+
+async function termRun() {
+  if (termBusy) return;
+  const cmd = $("term-cmd").value.trim();
+  if (!cmd) return;
+  termBusy = true;
+  $("term-run").disabled = true;
+  termHist.push(cmd);
+  termHistIdx = termHist.length;
+  $("term-cmd").value = "";
+  termAppend("$ " + cmd);
+  try {
+    const r = await fetch("/term", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cmd }),
+    });
+    const d = await r.json();
+    if (d.error) termAppend("[error] " + d.error);
+    else {
+      let block = "";
+      if (d.stdout) block += d.stdout;
+      if (d.stderr) block += "[stderr] " + d.stderr;
+      if (!block) block = "(no output)";
+      termAppend(block);
+      termAppend(`[exit ${d.exit_code}]`);
+    }
+  } catch (e) {
+    termAppend("[network error] " + e.message);
+  } finally {
+    termBusy = false;
+    $("term-run").disabled = false;
+  }
+}
+
+$("btn-term").addEventListener("click", () => {
+  toggleSidebar(false);
+  $("term-drawer").classList.remove("hidden");
+  setTimeout(() => $("term-cmd").focus(), 60);
+});
+$("term-close").addEventListener("click", () => $("term-drawer").classList.add("hidden"));
+$("term-run").addEventListener("click", termRun);
+$("term-cmd").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); termRun(); }
+  else if (e.key === "ArrowUp" && termHist.length) {
+    e.preventDefault();
+    termHistIdx = Math.max(0, termHistIdx - 1);
+    $("term-cmd").value = termHist[termHistIdx];
+  } else if (e.key === "ArrowDown") {
+    e.preventDefault();
+    termHistIdx = Math.min(termHist.length, termHistIdx + 1);
+    $("term-cmd").value = termHist[termHistIdx] ?? "";
+  }
+});
 $("settings-close").addEventListener("click", () => $("settings").classList.add("hidden"));
 /* key flow: always-visible input + check/save (no toggle states to desync) */
 $("key-toggle")?.addEventListener("click", () => {
@@ -369,7 +434,7 @@ async function requestStop() {
 function autoGrow() {
   const t = $("input");
   t.style.height = "auto";
-  t.style.height = Math.min(t.scrollHeight, 160) + "px";
+  t.style.height = t.scrollHeight + "px";   // no cap — expands with content
 }
 $("input").addEventListener("input", autoGrow);
 // sending is button-only by design; Enter inserts a newline

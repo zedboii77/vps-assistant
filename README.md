@@ -74,12 +74,48 @@ python3 server.py           # http://127.0.0.1:8095
 
 ## Production deploy (systemd + nginx)
 
-`sudo bash install.sh --domain YOUR_DOMAIN` does all of this for you (nginx
-vhost, certbot TLS, systemd unit). The templates in `deploy/` remain for
-anyone who prefers a fully manual setup: copy
-`deploy/vps-assistant.service` to `/etc/systemd/system/`, use
-`deploy/nginx-vhttp-bootstrap.conf` as the pre-certbot vhost (HTTP only until
-the certificate exists), then `certbot --nginx -d YOUR_DOMAIN`.
+**You need:** a VPS with systemd, Python 3.10+, and a domain whose **A record
+points at the server's IP** (check: `dig +short YOUR_DOMAIN`).
+
+### Option A — one command (recommended)
+
+```bash
+sudo bash install.sh --domain YOUR_DOMAIN
+```
+
+That's it — the installer configures nginx, obtains the TLS certificate,
+creates and health-checks the service, and prints your next steps.
+
+### Option B — manual (if you'd rather see every step)
+
+```bash
+# 1. Copy the app to /opt
+sudo mkdir -p /opt/vps-assistant/static /opt/vps-assistant/data
+sudo cp server.py /opt/vps-assistant/
+sudo cp static/* /opt/vps-assistant/static/
+
+# 2. Install and start the service
+sudo cp deploy/vps-assistant.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now vps-assistant
+curl http://127.0.0.1:8095/health        # → {"ok": true}
+
+# 3. Set up nginx (HTTP first — the cert doesn't exist yet)
+#    Replace YOUR_DOMAIN in deploy/nginx-vhttp-bootstrap.conf, then:
+sudo cp deploy/nginx-vhttp-bootstrap.conf /etc/nginx/sites-available/YOUR_DOMAIN
+sudo ln -s /etc/nginx/sites-available/YOUR_DOMAIN /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+
+# 4. Add TLS (certbot edits the vhost and adds the HTTPS block itself)
+sudo apt install -y certbot python3-certbot-nginx   # if missing
+sudo certbot --nginx -d YOUR_DOMAIN
+
+# 5. Verify
+curl https://YOUR_DOMAIN/health          # → {"ok": true}
+```
+
+Then open `https://YOUR_DOMAIN`, create your password, and (if you didn't set
+`--api-key` or `OPENROUTER_API_KEY`) add your OpenRouter key via ⚙ Settings.
 
 The app binds `127.0.0.1` by default — put it behind nginx/TLS rather than
 exposing the port. Anyone who can reach this UI can run shell commands as the

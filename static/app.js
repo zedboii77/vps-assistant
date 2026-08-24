@@ -120,9 +120,12 @@ async function refreshKeyStatus() {
   dl.innerHTML = (MODEL_SUGGESTIONS[prov] || [])
     .map((m) => `<option value="${esc(m)}">`).join("");
   $("model-note").textContent = prov === "opencode"
-    ? "Zen chat-completions models. Free without billing: " + ZEN_FREE.join(", ") +
+    ? "Free without billing: " + ZEN_FREE.join(", ") +
       ". Paid ones (kimi, glm, …) need a payment method at opencode.ai."
     : "Any OpenRouter model slug.";
+  $("provider-note").textContent = prov === "opencode"
+    ? "Curated gateway at opencode.ai — same console account."
+    : "Any model on openrouter.ai — same account/key.";
 }
 
 document.querySelectorAll("#provider-seg button").forEach((b) =>

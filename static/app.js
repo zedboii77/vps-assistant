@@ -532,7 +532,7 @@ function attachStream(taskId, replay) {
   detachStream();
   currentTask = taskId;
   setRunningUI(true);
-  let bubble = null, rawText = "", renderQueued = false;
+  let bubble = null, rawText = "", renderQueued = false, hadError = false;
   const from = replay ? 0 : null;   // server replays full log when from=0
 
   const scheduleRender = () => {
@@ -543,10 +543,10 @@ function attachStream(taskId, replay) {
       if (bubble) { bubble.innerHTML = mdRender(rawText) + '<span class="cursor"></span>'; scrollDown(); }
     }, 90);
   };
-  /* final render without the blinking cursor */
+  /* final render without the blinking cursor; never clobber error alerts */
   const finalize = () => {
     renderQueued = false;
-    if (bubble) {
+    if (bubble && !hadError) {
       bubble.innerHTML = mdRender(rawText) || "(empty reply)";
       scrollDown();
     }
@@ -587,6 +587,7 @@ function attachStream(taskId, replay) {
       if (bubble) bubble.innerHTML = mdRender(rawText) + " <em>(stopped)</em>";
       setStatus("");
     } else if (ev.type === "error") {
+      hadError = true;
       if (!bubble) bubble = addAssistantMsg();
       bubble.innerHTML = `<span class="alert">!! ${esc(ev.message)}</span>`;
       scrollDown();

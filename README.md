@@ -22,22 +22,41 @@ No npm, no pip, no build step.
   every system prompt
 - 🔒 Destructive-action confirmation policy baked into the system prompt
 
-## Quick start
+## Quick start (SSH terminal)
 
 ```bash
 git clone https://github.com/<you>/vps-assistant.git
 cd vps-assistant
-
-# optional: pre-set the key via env instead of the Settings UI
-echo "OPENROUTER_API_KEY=sk-or-v1-..." > .env   # not read by server.py directly;
-                                                # see systemd unit below
-
-python3 server.py
-# → http://127.0.0.1:8095
+sudo bash install.sh        # then answer 2–3 short questions
 ```
 
-Open the URL, create your password, click ⚙ → paste your OpenRouter API key
-(`sk-or-v1-…`), and chat.
+The installer asks how you'll access the UI (**domain + HTTPS** / **server IP**
+/ **localhost only**), optionally takes your OpenRouter key up front, creates a
+systemd service, health-checks it, and prints your exact next steps — including
+the SSH tunnel command if you chose localhost mode.
+
+Prefer zero questions?
+
+```bash
+sudo bash install.sh --domain vps.example.com     # needs a DNS A record first
+sudo bash install.sh --public --port 9000         # http://SERVER_IP:9000
+sudo bash install.sh --api-key sk-or-v1-xxxx      # pre-set the model key
+```
+
+Manage an existing install any time:
+
+```bash
+bash install.sh --status                # running? URL? key/password set?
+bash install.sh --update                # refresh app files + restart
+bash install.sh --uninstall             # remove service (keeps data)
+bash install.sh --uninstall --purge     # ...and delete data too
+```
+
+Run without installing (dev):
+
+```bash
+python3 server.py           # http://127.0.0.1:8095
+```
 
 > The API key is stored server-side in `data/openrouter_key` (chmod 600) or
 > provided via the `OPENROUTER_API_KEY` environment variable. Get one at
@@ -55,19 +74,12 @@ Open the URL, create your password, click ⚙ → paste your OpenRouter API key
 
 ## Production deploy (systemd + nginx)
 
-Templates live in `deploy/`. Typical flow as root:
-
-```bash
-mkdir -p /opt/vps-assistant
-cp -r . /opt/vps-assistant && rm -rf /opt/vps-assistant/.git
-
-cp deploy/vps-assistant.service /etc/systemd/system/
-systemctl daemon-reload && systemctl enable --now vps-assistant
-
-# nginx: copy deploy/nginx-vhost.conf.example to /etc/nginx/sites-available/,
-# adjust server_name, symlink into sites-enabled, then:
-certbot --nginx -d vps.example.com
-```
+`sudo bash install.sh --domain YOUR_DOMAIN` does all of this for you (nginx
+vhost, certbot TLS, systemd unit). The templates in `deploy/` remain for
+anyone who prefers a fully manual setup: copy
+`deploy/vps-assistant.service` to `/etc/systemd/system/`, use
+`deploy/nginx-vhttp-bootstrap.conf` as the pre-certbot vhost (HTTP only until
+the certificate exists), then `certbot --nginx -d YOUR_DOMAIN`.
 
 The app binds `127.0.0.1` by default — put it behind nginx/TLS rather than
 exposing the port. Anyone who can reach this UI can run shell commands as the
@@ -87,6 +99,7 @@ service user; keep it behind HTTPS + a strong password.
 ## Repo layout
 
 ```
+install.sh           one-command installer / status / update / uninstall
 server.py            HTTP server + agent loop + tools (stdlib only)
 static/index.html    UI shell
 static/app.js        chat frontend (SSE client, mini-markdown)

@@ -119,9 +119,20 @@ $("btn-logout").addEventListener("click", async () => {
 });
 $("settings-close").addEventListener("click", () => $("settings").classList.add("hidden"));
 $("key-toggle").addEventListener("click", () => {
+  const showing = !$("key-input").classList.contains("hidden");
   $("key-input").classList.toggle("hidden");
   $("key-actions").classList.toggle("hidden");
   $("key-verify").textContent = "";
+  if (!showing) $("key-input").focus();
+});
+/* delegated safety net for settings actions — survives any listener loss */
+document.addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-act]");
+  if (!btn) return;
+  const act = btn.dataset.act;
+  if (act === "toggle-key") { $("key-toggle").click(); }
+  else if (act === "check-key") { $("key-check").click(); }
+  else if (act === "save-key") { $("key-save").click(); }
 });
 async function validateKey(k) {
   const r = await fetch("/auth/validate-key", {

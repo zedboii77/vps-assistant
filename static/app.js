@@ -338,12 +338,7 @@ function autoGrow() {
   t.style.height = Math.min(t.scrollHeight, 160) + "px";
 }
 $("input").addEventListener("input", autoGrow);
-$("input").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    doSend();
-  }
-});
+// NOTE: sending is intentionally button-only. Enter inserts a newline.
 $("btn-send").addEventListener("click", doSend);
 
 $("btn-newchat").addEventListener("click", () => {

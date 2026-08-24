@@ -10,6 +10,11 @@ patching configs, restarting units — then reports back with the output.
 **Zero dependencies.** Pure Python 3 stdlib (server) + vanilla JS (frontend).
 No npm, no pip, no build step.
 
+**Highlights:** tasks keep running server-side even if you close your browser
+(reconnect and watch them live), chat history persists on your host, and a
+per-message reasoning-effort auto-tuner keeps quick questions fast while
+complex debugging gets deep thinking.
+
 ## Features
 
 - 🔐 Single-user password auth (first visit = setup, HMAC-signed session cookie,
@@ -17,7 +22,7 @@ No npm, no pip, no build step.
 - 🤖 OpenRouter streaming chat with any model slug
 - 🛠️ Agent tool loop: `shell`, `read_file`, `write_file` — up to 12 tool rounds
   per message, with live tool-call chips in the UI
-- 📱 Mobile-first monochrome terminal UI (prompt-line chat, ASCII boot screen;
+- 📱 Mobile-first monochrome terminal UI (prompt-line chat, `you >` in blue;
   errors stay red)
 - 🎙 Voice dictation via the browser's built-in speech API (mic button; hidden
   where unsupported)
@@ -32,7 +37,7 @@ No npm, no pip, no build step.
 ## Quick start (SSH terminal)
 
 ```bash
-git clone https://github.com/<you>/vps-assistant.git
+git clone https://github.com/zedboii77/vps-assistant.git
 cd vps-assistant
 sudo bash install.sh        # then answer 2–3 short questions
 ```
@@ -50,6 +55,8 @@ sudo bash install.sh --public                     # http://SERVER_IP:8095 (defau
 sudo bash install.sh --public --port 9000         # any custom port works too
 sudo bash install.sh --api-key «redacted:sk-…»      # pre-set the model key
 ```
+
+> Live example: this exact setup runs at <https://vps.six7.web.id>.
 
 Manage an existing install any time:
 
@@ -72,11 +79,15 @@ python3 server.py           # http://127.0.0.1:8095
 
 ## Configuration (environment)
 
+These are optional — the Settings UI covers key/model/effort. Environment
+vars are read from the service's environment (systemd unit or `.env` via
+`EnvironmentFile=`).
+
 | Var                  | Default            | Notes                          |
 |----------------------|--------------------|--------------------------------|
 | `VPSA_PORT`          | `8095`             | HTTP port                      |
 | `VPSA_HOST`          | `127.0.0.1`        | Bind address (keep loopback!)  |
-| `VPSA_DATA_DIR`      | `<repo>/data`      | Auth + key storage             |
+| `VPSA_DATA_DIR`      | `<app dir>/data`   | Auth + key storage             |
 | `VPSA_MODEL`         | `stealth/ox-alpha` | Any OpenRouter model slug      |
 | `VPSA_REASONING`     | `high`             | Reasoning effort (low/medium/high) |
 | `OPENROUTER_API_KEY` | —                  | Overrides the Settings-UI key  |
@@ -124,7 +135,8 @@ curl https://YOUR_DOMAIN/health          # → {"ok": true}
 ```
 
 Then open `https://YOUR_DOMAIN`, create your password, and (if you didn't set
-`--api-key` or `OPENROUTER_API_KEY`) add your OpenRouter key via ⚙ Settings.
+`--api-key` or `OPENROUTER_API_KEY`) add your OpenRouter key via the sidebar →
+**cfg** → **set** (use *check* to validate it against OpenRouter before saving).
 
 The app binds `127.0.0.1` by default — put it behind nginx/TLS rather than
 exposing the port. Anyone who can reach this UI can run shell commands as the
@@ -194,10 +206,11 @@ whenever you like.
 ```
 install.sh           one-command installer / status / update / uninstall
 server.py            HTTP server + agent loop + tools (stdlib only)
+SOUL.md              personality overlay (edit anytime, applies next message)
 static/index.html    UI shell
-static/app.js        chat frontend (SSE client, mini-markdown)
-static/style.css     dark mobile-first theme
+static/app.js        chat frontend (SSE client, reattachable tasks, mini-markdown)
+static/style.css     monochrome terminal theme
 deploy/*.service     systemd unit template
-deploy/nginx-*       reverse-proxy template
+deploy/nginx-*       reverse-proxy templates (pre/post certbot)
 .env.example         environment template
 ```

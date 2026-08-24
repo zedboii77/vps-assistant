@@ -120,11 +120,31 @@ $("btn-logout").addEventListener("click", async () => {
 $("settings-close").addEventListener("click", () => $("settings").classList.add("hidden"));
 $("key-toggle").addEventListener("click", () => {
   $("key-input").classList.toggle("hidden");
-  $("key-save").classList.toggle("hidden");
+  $("key-actions").classList.toggle("hidden");
+  $("key-verify").textContent = "";
+});
+async function validateKey(k) {
+  const r = await fetch("/auth/validate-key", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: k }),
+  });
+  return r.json();
+}
+$("key-check").addEventListener("click", async () => {
+  const v = $("key-input").value.trim();
+  const note = $("key-verify");
+  if (!v.startsWith("sk-or-")) { note.textContent = "!! keys start with sk-or-"; return; }
+  note.textContent = "checking with OpenRouter…";
+  const d = await validateKey(v);
+  note.textContent = d.ok
+    ? `valid — ${d.label}, used $${d.usage}${d.limit ? " of $" + d.limit : ""}`
+    : "!! " + d.error;
 });
 $("key-save").addEventListener("click", async () => {
   const v = $("key-input").value.trim();
-  if (!v.startsWith("sk-or-")) { $("key-status").textContent = "keys start with sk-or-"; return; }
+  const note = $("key-verify");
+  if (!v.startsWith("sk-or-")) { note.textContent = "!! keys start with sk-or-"; return; }
   const r = await fetch("/auth/key", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -132,9 +152,10 @@ $("key-save").addEventListener("click", async () => {
   });
   const d = await r.json();
   $("key-status").textContent = r.ok ? "saved " + d.masked : (d.error || "save failed");
+  $("key-verify").textContent = r.ok ? "saved ✔ (use check to verify against OpenRouter)" : "";
   $("key-input").value = "";
   $("key-input").classList.add("hidden");
-  $("key-save").classList.add("hidden");
+  $("key-actions").classList.add("hidden");
   refreshKeyStatus();
 });
 
@@ -148,13 +169,58 @@ async function refreshChatList() {
     el.className = "chat-item" + (c.id === chatId ? " active" : "");
     el.dataset.id = c.id;
     const runMark = c.running ? '<span class="run-mark">●</span>' : "";
-    el.innerHTML = `<span class="ci-title">${esc(c.title)}</span>${runMark}`;
-    el.title = `${c.n_messages} messages`;
-    el.addEventListener("click", () => openChat(c.id));
+    el.innerHTML = `<span class="ci-title">${esc(c.title)}</span>${runMark}` +
+      `<button class="ci-dots" title="Options">⋮</button>`;
+    el.addEventListener("click", (e) => {
+      if (e.target.closest(".ci-dots")) return;
+      openChat(c.id);
+    });
+    el.querySelector(".ci-dots").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openCtxMenu(e.clientX, e.clientY, c);
+    });
+    el.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      openCtxMenu(e.clientX, e.clientY, c);
+    });
     list.appendChild(el);
   }
   return d.chats || [];
 }
+
+/* ---------- context menu (⋮ / right-click) ---------- */
+function closeCtxMenu() {
+  document.querySelectorAll(".ctx-menu").forEach((m) => m.remove());
+}
+function openCtxMenu(x, y, chat) {
+  closeCtxMenu();
+  const menu = document.createElement("div");
+  menu.className = "ctx-menu";
+  const open = document.createElement("button");
+  open.textContent = "open";
+  open.addEventListener("click", () => { closeCtxMenu(); openChat(chat.id); });
+  const del = document.createElement("button");
+  del.textContent = chat.running ? "delete… (task running — will stop it)" : "delete";
+  del.className = "danger";
+  del.addEventListener("click", async () => {
+    closeCtxMenu();
+    if (!confirm(`Delete chat "${chat.title}"? This cannot be undone.`)) return;
+    await fetch(`/chats/${chat.id}`, { method: "DELETE" });
+    if (chat.id === chatId) { chatId = null; detachStream(); }
+    if ((await refreshChatList()).length) {
+      if (!chatId) openChat(($("chat-list").querySelector(".chat-item") || {}).dataset?.id || null);
+    } else {
+      newChat();
+    }
+  });
+  menu.append(open, del);
+  document.body.appendChild(menu);
+  const r = menu.getBoundingClientRect();
+  menu.style.left = Math.min(x, window.innerWidth - r.width - 8) + "px";
+  menu.style.top = Math.min(y, window.innerHeight - r.height - 8) + "px";
+}
+document.addEventListener("click", closeCtxMenu);
+document.addEventListener("scroll", closeCtxMenu, true);
 
 function toggleSidebar(force) {
   $("sidebar").classList.toggle("open", force);

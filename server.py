@@ -689,6 +689,30 @@ class Handler(BaseHTTPRequestHandler):
                 f.write(k)
             os.chmod(KEY_FILE, 0o600)
             return self._send(200, {"ok": True, "masked": mask_key(k)})
+        if path == "/auth/validate-key":
+            k = str(self._body().get("api_key", "")).strip()
+            if not k.startswith("sk-or-"):
+                return self._send(400, {"ok": False, "error": "keys start with sk-or-"})
+            req = urllib.request.Request(
+                "https://openrouter.ai/api/v1/auth/key",
+                headers={"Authorization": f"Bearer {k}"})
+            try:
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    info = json.load(r)
+                data = info.get("data", {}) if isinstance(info, dict) else {}
+                out = {"ok": True,
+                       "label": data.get("label") or "(unnamed key)",
+                       "usage": round(data.get("usage", 0), 2),
+                       "limit": data.get("limit"),
+                       "is_free_tier": data.get("is_free_tier", False)}
+                return self._send(200, out)
+            except urllib.error.HTTPError as e:
+                detail = e.read()[:200].decode(errors="replace")
+                msg = "invalid or revoked key" if e.code == 401 else \
+                      f"OpenRouter HTTP {e.code}"
+                return self._send(200, {"ok": False, "error": msg, "detail": detail})
+            except Exception as e:
+                return self._send(200, {"ok": False, "error": f"network error: {e}"})
         if path == "/settings/reasoning":
             lvl = str(self._body().get("effort", "")).strip().lower()
             if lvl not in VALID_EFFORTS:

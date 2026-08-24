@@ -85,11 +85,12 @@ $("auth-form").addEventListener("submit", async (e) => {
 });
 
 /* ---------- key / settings ---------- */
-/* free models only, verified tool-calling capable */
+/* curated lists: verified tool-calling capable */
 const MODEL_LISTS = {
   openrouter: [
-    { id: "nvidia/nemotron-3.5-lightning:free", label: "Nemotron 3.5 Lightning (1M ctx)" },
-    { id: "cohere/north-mini-code:free",        label: "North Mini Code (code)" },
+    { id: "stealth/ox-alpha", label: "★ Ox-Alpha (best quality, paid)" },
+    { id: "nvidia/nemotron-3.5-lightning:free", label: "Nemotron 3.5 Lightning (free · 1M ctx)" },
+    { id: "cohere/north-mini-code:free",        label: "North Mini Code (free · code)" },
   ],
   opencode: [
     { id: "big-pickle", label: "Big Pickle (free)" },

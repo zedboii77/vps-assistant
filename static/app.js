@@ -106,10 +106,16 @@ document.querySelectorAll("#reasoning-seg button").forEach((b) =>
     if (r.ok) refreshKeyStatus();
   }));
 $("btn-settings").addEventListener("click", () => {
+  toggleSidebar(false);
   $("settings").classList.remove("hidden");
   $("key-input").classList.add("hidden");
   $("key-save").classList.add("hidden");
   refreshKeyStatus();
+});
+$("btn-logout").addEventListener("click", async () => {
+  toggleSidebar(false);
+  await fetch("/auth/logout", { method: "POST" });
+  location.reload();
 });
 $("settings-close").addEventListener("click", () => $("settings").classList.add("hidden"));
 $("key-toggle").addEventListener("click", () => {
@@ -130,10 +136,6 @@ $("key-save").addEventListener("click", async () => {
   $("key-input").classList.add("hidden");
   $("key-save").classList.add("hidden");
   refreshKeyStatus();
-});
-$("btn-logout").addEventListener("click", async () => {
-  await fetch("/auth/logout", { method: "POST" });
-  location.reload();
 });
 
 /* ---------- sidebar / chat list ---------- */

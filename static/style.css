@@ -453,7 +453,7 @@ code, pre {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  z-index: 50;
+  z-index: 80;   /* above sidebar drawer (60) and its backdrop (55) */
 }
 .modal-card {
   width: 100%;

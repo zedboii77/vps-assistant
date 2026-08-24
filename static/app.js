@@ -230,6 +230,16 @@ $("btn-menu").addEventListener("click", () => toggleSidebar());
 $("backdrop").addEventListener("click", () => toggleSidebar(false));
 $("btn-newchat").addEventListener("click", () => { newChat(); });
 
+async function requestStop() {
+  if (!currentTask) return;
+  setStatus("stop requested — takes effect between steps…");
+  await fetch("/chat/stop", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ task_id: currentTask }),
+  });
+}
+
 async function newChat() {
   const d = await fetch("/chats", { method: "POST" }).then((r) => r.json());
   chatId = d.id;
@@ -333,7 +343,20 @@ function setStatus(text) {
 
 function setRunningUI(on) {
   streaming = on;
-  $("btn-stop").classList.toggle("hidden", !on);
+  // the composer's send button becomes a stop button while a task runs
+  const send = $("btn-send");
+  send.textContent = on ? "stop" : "send";
+  send.classList.toggle("stopping", on);
+}
+
+async function requestStop() {
+  if (!currentTask) return;
+  setStatus("stop requested — takes effect between steps…");
+  await fetch("/chat/stop", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ task_id: currentTask }),
+  });
 }
 
 /* ---------- send / task lifecycle ---------- */
@@ -347,7 +370,7 @@ $("input").addEventListener("input", autoGrow);
 $("btn-send").addEventListener("click", doSend);
 
 async function doSend() {
-  if (streaming) return;
+  if (streaming) { await requestStop(); return; }
   const input = $("input");
   const text = input.value.trim();
   if (!text || !chatId) return;
@@ -467,16 +490,6 @@ function detachStream() {
   currentTask = null;
 }
 
-$("btn-stop").addEventListener("click", async () => {
-  if (!currentTask) return;
-  await fetch("/chat/stop", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ task_id: currentTask }),
-  });
-  setStatus("stop requested — takes effect between steps…");
-});
-
 // Reattach to the active chat's running task after a page reload.
 window.addEventListener("beforeunload", () => { try { eventSource?.close(); } catch {} });
 
@@ -529,7 +542,7 @@ if (!SR) {
 
 /* startup sanity: every control we expect must exist in the DOM */
 for (const id of ["btn-send", "btn-newchat", "btn-mic", "btn-settings",
-                  "btn-stop", "btn-menu", "chat-list", "input"]) {
+                  "btn-menu", "chat-list", "input"]) {
   if (!$(id)) console.error("vpsa: missing required element #" + id);
 }
 

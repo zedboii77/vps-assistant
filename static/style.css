@@ -463,6 +463,12 @@ code, pre {
 .composer button:hover { background: var(--inv-bg); color: var(--inv-fg); }
 #btn-send:disabled { opacity: .35; cursor: default; }
 #btn-send:disabled:hover { background: transparent; color: var(--fg); }
+#btn-send.stopping {
+  background: var(--red);
+  color: #fff;
+  font-weight: 700;
+}
+#btn-send.stopping:hover { background: #d94343; }
 
 #btn-mic.recording {
   background: var(--inv-bg);

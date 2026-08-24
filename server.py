@@ -131,7 +131,45 @@ def mask_key(k: str) -> str:
     return f"{k[:11]}...{k[-4:]}" if len(k) > 20 else "***"
 
 
-VALID_EFFORTS = ("low", "medium", "high")
+VALID_EFFORTS = ("low", "medium", "high", "auto")
+
+_HIGH_HINT = re.compile(
+    r"\b(why|debug|troubleshoot|investigate|diagnos\w*|broken|not working|"
+    r"doesn.?t work|won.?t (start|run|work)|failing|failure|errors?|crash\w*|"
+    r"weird|strange|unexpectedly|slow|hung|stuck|refused|timeout|out of|"
+    r"analyze|root cause|security|breach|audit|migrat\w*|optimize|"
+    r"performance|benchmark|compare)\b", re.I)
+_LOW_HINT = re.compile(
+    r"^\s*(hi+|hello+|hey+|yo|sup|test|ping|thanks|thank you|thx|ty|ok|okay|"
+    r"cool|nice|great|perfect|bye|good (morning|afternoon|evening|night)|"
+    r"who are you|what can you do)[\s!.?]*$", re.I)
+
+
+def classify_effort(text: str) -> str:
+    """Heuristic per-message reasoning-effort picker used when set to 'auto'."""
+    t = (text or "").strip()
+    if not t:
+        return "medium"
+    if len(t) <= 30 and _LOW_HINT.match(t):
+        return "low"
+    score = 0
+    if _HIGH_HINT.search(t):
+        score += 2
+    if len(t) > 280:
+        score += 2
+    elif len(t) > 120:
+        score += 1
+    if t.count("?") >= 2:
+        score += 1
+    list_lines = sum(1 for ln in t.splitlines()
+                     if re.match(r"\s*(\d+[.)]|[-*•])\s+", ln))
+    if list_lines >= 2:
+        score += 2
+    if score >= 2:
+        return "high"
+    if score == 0:
+        return "low" if len(t) < 45 else "medium"
+    return "medium"
 
 
 def load_settings() -> dict:
@@ -302,11 +340,11 @@ def execute_tool(name: str, args: dict) -> dict:
     return {"ok": False, "error": f"unknown tool {name}"}
 
 
-def call_openrouter_stream(convo: list, api_key: str):
+def call_openrouter_stream(convo: list, api_key: str, effort: str):
     """Yield parsed chunks from a streaming completion. Raises on HTTP errors."""
     payload = {"model": MODEL, "messages": convo, "stream": True,
                "max_tokens": 16384, "tools": TOOLS_SCHEMA,
-               "reasoning": {"effort": get_reasoning()}}
+               "reasoning": {"effort": effort}}
     req = urllib.request.Request(
         OR_API_URL, data=json.dumps(payload).encode(),
         headers={"Authorization": f"Bearer {api_key}",
@@ -328,7 +366,7 @@ def call_openrouter_stream(convo: list, api_key: str):
         yield chunk
 
 
-def run_agent(messages: list, api_key: str, should_cancel=None):
+def run_agent(messages: list, api_key: str, should_cancel=None, effort: str = "medium"):
     """Full tool-loop. Yields UI events; final text arrives as delta events.
     `should_cancel` is polled between steps; when true, yields 'cancelled'."""
     convo = [{"role": "system",
@@ -341,7 +379,7 @@ def run_agent(messages: list, api_key: str, should_cancel=None):
         yield {"type": "status", "stage": "thinking"}
         parts, calls, finish = [], {}, None
         try:
-            for chunk in call_openrouter_stream(convo, api_key):
+            for chunk in call_openrouter_stream(convo, api_key, effort):
                 chs = chunk.get("choices") or []
                 if not chs:
                     continue
@@ -478,14 +516,24 @@ CHAT_TASK: dict[str, str] = {}   # chat_id -> running task_id
 STATE_LOCK = threading.Lock()
 
 
-def run_agent_task(task: Task, api_key: str) -> None:
+def run_agent_task(task: Task, api_key: str, effort_setting: str) -> None:
     """Detached worker: streams events into the task log and persists the
     final assistant message to the chat file. Survives client disconnects."""
     acc: list[str] = []
     try:
         chat = load_chat(task.chat_id)
         msgs = chat["messages"] if chat else []
-        for ev in run_agent(msgs, api_key, should_cancel=lambda: task.cancel):
+        last_user = next((m["content"] for m in reversed(msgs)
+                          if m.get("role") == "user"), "")
+        if effort_setting == "auto":
+            effort = classify_effort(last_user)
+        else:
+            effort = effort_setting
+        with task.cond:
+            task.events.append({"type": "effort", "value": effort})
+            task.cond.notify_all()
+        for ev in run_agent(msgs, api_key,
+                            should_cancel=lambda: task.cancel, effort=effort):
             with task.cond:
                 task.events.append(ev)
                 task.cond.notify_all()
@@ -714,7 +762,8 @@ class Handler(BaseHTTPRequestHandler):
             task = Task(cid)
             TASKS[task.id] = task
             CHAT_TASK[cid] = task.id
-        threading.Thread(target=run_agent_task, args=(task, api_key),
+        threading.Thread(target=run_agent_task,
+                         args=(task, api_key, get_reasoning()),
                          daemon=True).start()
         return self._send(202, {"task_id": task.id, "chat_id": cid})
 

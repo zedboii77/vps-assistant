@@ -544,6 +544,12 @@ hr {
   color: var(--inv-fg);
   font-weight: 700;
 }
+.fld-note {
+  color: var(--faint);
+  font-size: 10px;
+  margin: 6px 0 0;
+  line-height: 1.4;
+}
 
 #btn-menu { display: none; }
 

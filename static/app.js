@@ -327,6 +327,8 @@ function attachStream(taskId, replay) {
       if (!bubble) bubble = addAssistantMsg();
       rawText += ev.text;
       scheduleRender();
+    } else if (ev.type === "effort") {
+      setStatus("thinking… (effort: " + ev.value + ")");
     } else if (ev.type === "tool_start") {
       if (bubble && !rawText) { bubble.remove(); bubble = null; }
       ev._chip = addToolChip(ev.name, ev.brief);

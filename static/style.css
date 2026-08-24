@@ -521,6 +521,30 @@ hr {
   margin: 16px 0;
 }
 
+/* reasoning segmented control */
+.seg {
+  display: flex;
+  border: 1px solid var(--border);
+}
+.seg button {
+  flex: 1;
+  padding: 8px 0;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--dim);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.seg button:last-child { border-right: none; }
+.seg button:hover { color: var(--fg); background: var(--panel2); }
+.seg button.active {
+  background: var(--inv-bg);
+  color: var(--inv-fg);
+  font-weight: 700;
+}
+
 #btn-menu { display: none; }
 
 @media (max-width: 900px) {

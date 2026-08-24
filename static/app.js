@@ -87,11 +87,24 @@ $("auth-form").addEventListener("submit", async (e) => {
 /* ---------- key / settings ---------- */
 async function refreshKeyStatus() {
   const k = await fetch("/auth/key").then((r) => r.json());
-  $("model-badge").textContent = k.model || "?";
+  $("model-badge").textContent = k.model + " · " + (k.reasoning || "?");
   $("model-name").textContent = k.model || "?";
+  document.querySelectorAll("#reasoning-seg button").forEach((b) =>
+    b.classList.toggle("active", b.dataset.effort === k.reasoning));
   $("key-status").textContent = k.configured
     ? k.masked + " configured" : "not configured";
 }
+
+document.querySelectorAll("#reasoning-seg button").forEach((b) =>
+  b.addEventListener("click", async () => {
+    const effort = b.dataset.effort;
+    const r = await fetch("/settings/reasoning", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ effort }),
+    });
+    if (r.ok) refreshKeyStatus();
+  }));
 $("btn-settings").addEventListener("click", () => {
   $("settings").classList.remove("hidden");
   $("key-input").classList.add("hidden");

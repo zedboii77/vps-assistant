@@ -56,10 +56,11 @@ os.makedirs(DATA_DIR, exist_ok=True)
 AUTH_FILE = os.path.join(DATA_DIR, "auth.json")
 KEY_FILE = os.path.join(DATA_DIR, "openrouter_key")
 SECRET_FILE = os.path.join(DATA_DIR, "session_secret")
+SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 CHATS_DIR = os.path.join(DATA_DIR, "chats")
 os.makedirs(CHATS_DIR, exist_ok=True)
 
-for _p in (AUTH_FILE, KEY_FILE, SECRET_FILE):
+for _p in (AUTH_FILE, KEY_FILE, SECRET_FILE, SETTINGS_FILE):
     if not os.path.exists(_p):
         with open(_p, "w") as f:
             pass
@@ -128,6 +129,30 @@ def get_api_key() -> str | None:
 
 def mask_key(k: str) -> str:
     return f"{k[:11]}...{k[-4:]}" if len(k) > 20 else "***"
+
+
+VALID_EFFORTS = ("low", "medium", "high")
+
+
+def load_settings() -> dict:
+    try:
+        with open(SETTINGS_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_settings(d: dict) -> None:
+    tmp = SETTINGS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f)
+    os.replace(tmp, SETTINGS_FILE)
+    os.chmod(SETTINGS_FILE, 0o600)
+
+
+def get_reasoning() -> str:
+    lvl = load_settings().get("reasoning_effort")
+    return lvl if lvl in VALID_EFFORTS else REASONING_EFFORT
 
 
 _login_fails: dict[str, list[float]] = {}
@@ -281,7 +306,7 @@ def call_openrouter_stream(convo: list, api_key: str):
     """Yield parsed chunks from a streaming completion. Raises on HTTP errors."""
     payload = {"model": MODEL, "messages": convo, "stream": True,
                "max_tokens": 16384, "tools": TOOLS_SCHEMA,
-               "reasoning": {"effort": REASONING_EFFORT}}
+               "reasoning": {"effort": get_reasoning()}}
     req = urllib.request.Request(
         OR_API_URL, data=json.dumps(payload).encode(),
         headers={"Authorization": f"Bearer {api_key}",
@@ -563,7 +588,8 @@ class Handler(BaseHTTPRequestHandler):
             k = get_api_key()
             return self._send(200, {"configured": bool(k),
                                     "masked": mask_key(k) if k else None,
-                                    "model": MODEL})
+                                    "model": MODEL,
+                                    "reasoning": get_reasoning()})
         if path == "/chats":
             return self._send(200, {"chats": list_chats()})
         if len(segs) == 2 and segs[0] == "chats" and valid_cid(segs[1]):
@@ -615,6 +641,14 @@ class Handler(BaseHTTPRequestHandler):
                 f.write(k)
             os.chmod(KEY_FILE, 0o600)
             return self._send(200, {"ok": True, "masked": mask_key(k)})
+        if path == "/settings/reasoning":
+            lvl = str(self._body().get("effort", "")).strip().lower()
+            if lvl not in VALID_EFFORTS:
+                return self._send(400, {"error": f"effort must be one of: {', '.join(VALID_EFFORTS)}"})
+            s = load_settings()
+            s["reasoning_effort"] = lvl
+            save_settings(s)
+            return self._send(200, {"ok": True, "reasoning": lvl})
         if path == "/chats":
             chat = new_chat()
             return self._send(200, {"id": chat["id"]})

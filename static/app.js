@@ -108,8 +108,7 @@ document.querySelectorAll("#reasoning-seg button").forEach((b) =>
 $("btn-settings").addEventListener("click", () => {
   toggleSidebar(false);
   $("settings").classList.remove("hidden");
-  $("key-input").classList.add("hidden");
-  $("key-save").classList.add("hidden");
+  $("key-verify").textContent = "";
   refreshKeyStatus();
 });
 $("btn-logout").addEventListener("click", async () => {
@@ -118,14 +117,12 @@ $("btn-logout").addEventListener("click", async () => {
   location.reload();
 });
 $("settings-close").addEventListener("click", () => $("settings").classList.add("hidden"));
-$("key-toggle").addEventListener("click", () => {
-  const showing = !$("key-input").classList.contains("hidden");
+/* key flow: always-visible input + check/save (no toggle states to desync) */
+$("key-toggle")?.addEventListener("click", () => {
   $("key-input").classList.toggle("hidden");
   $("key-actions").classList.toggle("hidden");
   $("key-verify").textContent = "";
-  if (!showing) $("key-input").focus();
 });
-/* delegated safety net for settings actions — survives any listener loss */
 document.addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-act]");
   if (!btn) return;
@@ -165,8 +162,6 @@ $("key-save").addEventListener("click", async () => {
   $("key-status").textContent = r.ok ? "saved " + d.masked : (d.error || "save failed");
   $("key-verify").textContent = r.ok ? "saved ✔ (use check to verify against OpenRouter)" : "";
   $("key-input").value = "";
-  $("key-input").classList.add("hidden");
-  $("key-actions").classList.add("hidden");
   refreshKeyStatus();
 });
 

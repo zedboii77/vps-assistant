@@ -39,8 +39,9 @@ Prefer zero questions?
 
 ```bash
 sudo bash install.sh --domain vps.example.com     # needs a DNS A record first
-sudo bash install.sh --public --port 9000         # http://SERVER_IP:9000
-sudo bash install.sh --api-key sk-or-v1-xxxx      # pre-set the model key
+sudo bash install.sh --public                     # http://SERVER_IP:8095 (default port)
+sudo bash install.sh --public --port 9000         # any custom port works too
+sudo bash install.sh --api-key «redacted:sk-…»      # pre-set the model key
 ```
 
 Manage an existing install any time:

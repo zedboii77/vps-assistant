@@ -561,6 +561,24 @@ code, pre {
   white-space: nowrap;
   color: var(--dim);
 }
+select.model-select {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  font-family: inherit;
+  cursor: pointer;
+  color: var(--fg);
+}
+.select-wrap { position: relative; }
+.select-wrap::after {
+  content: "▼";
+  position: absolute;
+  right: 10px; top: 50%;
+  transform: translateY(-50%);
+  color: var(--faint);
+  font-size: 10px;
+  pointer-events: none;
+}
 #key-input {
   width: 100%;
   margin-top: 8px;

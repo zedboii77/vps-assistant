@@ -50,14 +50,14 @@ PROVIDERS = {
     "openrouter": {
         "label": "OpenRouter",
         "url": "https://openrouter.ai/api/v1/chat/completions",
-        "default_model": "stealth/ox-alpha",
+        "default_model": "nvidia/nemotron-3.5-lightning:free",
         "supports_reasoning": True,
         "key_env": "OPENROUTER_API_KEY",
     },
     "opencode": {
         "label": "OpenCode Zen",
         "url": "https://opencode.ai/zen/v1/chat/completions",
-        "default_model": "kimi-k2.6",
+        "default_model": "big-pickle",
         "supports_reasoning": False,
         "key_env": "OPENCODE_API_KEY",
     },

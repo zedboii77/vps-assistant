@@ -85,12 +85,15 @@ $("auth-form").addEventListener("submit", async (e) => {
 });
 
 /* ---------- key / settings ---------- */
-const MODEL_SUGGESTIONS = {
-  openrouter: ["stealth/ox-alpha", "anthropic/claude-sonnet-4.5",
-    "openai/gpt-5.1", "google/gemini-2.5-pro", "deepseek/deepseek-chat-v3.1",
-    "x-ai/grok-code-fast-1", "qwen/qwen3-coder"],
-  opencode: ["kimi-k2.6", "glm-5.1", "minimax-m2.7", "qwen3-coder",
-    "grok-code", "deepseek-v4-pro", "big-pickle (free)", "code-supernova (free)"],
+/* free models only, verified tool-calling capable */
+const MODEL_LISTS = {
+  openrouter: [
+    { id: "nvidia/nemotron-3.5-lightning:free", label: "Nemotron 3.5 Lightning (1M ctx)" },
+    { id: "cohere/north-mini-code:free",        label: "North Mini Code (code)" },
+  ],
+  opencode: [
+    { id: "big-pickle", label: "Big Pickle (free)" },
+  ],
 };
 
 function get_provider_label() {
@@ -113,16 +116,27 @@ async function refreshKeyStatus() {
     b.classList.toggle("active", b.dataset.provider === prov));
   document.querySelectorAll("#reasoning-seg button").forEach((b) =>
     b.classList.toggle("active", b.dataset.effort === k.reasoning));
-  if (document.activeElement !== $("model-input")) {
-    $("model-input").value = k.model || "";
+  // rebuild model select
+  const sel = $("model-select");
+  sel.innerHTML = "";
+  const list = MODEL_LISTS[prov] || [];
+  const haveCurrent = list.some((m) => m.id === k.model);
+  for (const m of list) {
+    const o = document.createElement("option");
+    o.value = m.id;
+    o.textContent = m.label;
+    sel.appendChild(o);
   }
-  const dl = $("model-suggestions");
-  dl.innerHTML = (MODEL_SUGGESTIONS[prov] || [])
-    .map((m) => `<option value="${esc(m)}">`).join("");
+  if (!haveCurrent && k.model) {   // keep custom/legacy value selectable
+    const o = document.createElement("option");
+    o.value = k.model; o.textContent = k.model + " (custom)";
+    sel.appendChild(o);
+  }
+  sel.value = k.model || "";
+  if (!sel.value && list.length) sel.value = list[0].id;
   $("model-note").textContent = prov === "opencode"
-    ? "Free without billing: " + ZEN_FREE.join(", ") +
-      ". Paid ones (kimi, glm, …) need a payment method at opencode.ai."
-    : "Any OpenRouter model slug.";
+    ? "Free without billing: big-pickle. Paid Zen models need a payment method at opencode.ai."
+    : "Free tier: shared capacity, occasional rate limits. Paid models are one paste away.";
   $("provider-note").textContent = prov === "opencode"
     ? "Curated gateway at opencode.ai — same console account."
     : "Any model on openrouter.ai — same account/key.";
@@ -139,18 +153,15 @@ document.querySelectorAll("#provider-seg button").forEach((b) =>
   }));
 
 let modelSaveTimer = null;
-$("model-input").addEventListener("input", () => {
-  clearTimeout(modelSaveTimer);
-  modelSaveTimer = setTimeout(async () => {
-    const v = $("model-input").value.trim();
-    if (!v) return;
-    await fetch("/settings/provider", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: v }),
-    });
-    refreshKeyStatus();
-  }, 700);
+$("model-select").addEventListener("change", async () => {
+  const v = $("model-select").value;
+  if (!v) return;
+  await fetch("/settings/provider", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: v }),
+  });
+  refreshKeyStatus();
 });
 
 document.querySelectorAll("#reasoning-seg button").forEach((b) =>

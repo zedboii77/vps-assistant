@@ -276,6 +276,7 @@ function autoGrow() {
 }
 $("input").addEventListener("input", autoGrow);
 // sending is button-only by design; Enter inserts a newline
+$("btn-send").addEventListener("click", doSend);
 
 async function doSend() {
   if (streaming) return;
@@ -446,6 +447,12 @@ if (!SR) {
     };
     try { recog.start(); } catch {}
   });
+}
+
+/* startup sanity: every control we expect must exist in the DOM */
+for (const id of ["btn-send", "btn-newchat", "btn-mic", "btn-settings",
+                  "btn-stop", "btn-menu", "chat-list", "input"]) {
+  if (!$(id)) console.error("vpsa: missing required element #" + id);
 }
 
 boot();
